@@ -39,11 +39,33 @@ export type FinvizInsiderTradeDraft = {
   content_hash: string
 }
 
+export type FinvizMarketSnapshotDraft = {
+  ticker: string
+  price: number | null
+  change_value: number | null
+  change_pct: number | null
+  volume: number | null
+  avg_volume: number | null
+  market_cap: number | null
+  pe: number | null
+  forward_pe: number | null
+  eps_growth: number | null
+  sales_growth: number | null
+  beta: number | null
+  high_52w: number | null
+  low_52w: number | null
+  insider_ownership: number | null
+  institutional_ownership: number | null
+  source: string
+  updated_at: string
+}
+
 export type FinvizScrapeResult = {
   news: ScrapedItemDraft[]
   analystRatings: FinvizAnalystRatingDraft[]
   insiderTrades: FinvizInsiderTradeDraft[]
   filings: FinvizFilingDraft[]
+  marketData: FinvizMarketSnapshotDraft | null
 }
 
 export type FinvizFilingDraft = {
@@ -237,6 +259,96 @@ function normalizeAccessionNumber(value: string | null | undefined): string | nu
   if (!/^\d{1,18}$/.test(digits)) return null
   const padded = digits.padStart(18, '0')
   return `${padded.slice(0, 10)}-${padded.slice(10, 12)}-${padded.slice(12)}`
+}
+
+function parseCompactNumber(value: string | null | undefined): number | null {
+  const normalized = (value ?? '').trim().replace(/[$,%\s]/g, '')
+  if (!normalized || normalized === '—' || normalized === 'N/A') return null
+  const match = normalized.match(/^([+-]?(?:\d+\.?\d*|\d*\.\d+))([KMBT])?$/i)
+  if (!match) {
+    const plain = Number.parseFloat(normalized)
+    return Number.isFinite(plain) ? plain : null
+  }
+  const numeric = Number.parseFloat(match[1])
+  const suffix = match[2]?.toUpperCase() ?? ''
+  const multiplier = suffix === 'K' ? 1_000 : suffix === 'M' ? 1_000_000 : suffix === 'B' ? 1_000_000_000 : suffix === 'T' ? 1_000_000_000_000 : 1
+  return numeric * multiplier
+}
+
+function parsePercentValue(value: string | null | undefined): number | null {
+  const normalized = (value ?? '').trim().replace(/[$,%\s]/g, '')
+  if (!normalized || normalized === '—' || normalized === 'N/A') return null
+  const numeric = Number.parseFloat(normalized)
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+function parseSignedFloat(value: string | null | undefined): number | null {
+  const normalized = (value ?? '').trim().replace(/[^0-9.+-]/g, '')
+  if (!normalized || normalized === '—' || normalized === 'N/A' || normalized === '+') return null
+  const numeric = Number.parseFloat(normalized)
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+export function extractMarketSnapshot(html: string, ticker: string): FinvizMarketSnapshotDraft | null {
+  const rows = [...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map((match) => match[1] ?? '').filter(Boolean)
+  const values: Record<string, string> = {}
+  for (const row of rows) {
+    const cells = [...row.matchAll(/<(?:td|th)\b[^>]*>([\s\S]*?)<\/(?:td|th)>/gi)].map((match) => normalizeText(decodeHtmlEntities(match[1] ?? '')) ?? '')
+    if (cells.length < 2) continue
+    const label = cells[0].trim()
+    const cellValue = cells[1].trim()
+    if (!label || !cellValue) continue
+    values[label.toLowerCase()] = cellValue
+  }
+
+  const requestedTicker = normalizeTicker(ticker) ?? ticker.toUpperCase()
+  const snapshot: Partial<FinvizMarketSnapshotDraft> = {
+    ticker: requestedTicker,
+    source: 'FINVIZ',
+    updated_at: new Date().toISOString(),
+  }
+
+  for (const [label, value] of Object.entries(values)) {
+    if (label.includes('price') && snapshot.price === undefined && value) snapshot.price = parseSignedFloat(value)
+    if (label.includes('change') && !label.includes('percent') && !label.includes('%') && snapshot.change_value === undefined && value) snapshot.change_value = parseSignedFloat(value)
+    if ((label.includes('change %') || label.includes('change%')) && snapshot.change_pct === undefined && value) snapshot.change_pct = parsePercentValue(value)
+    if (label.includes('volume') && !label.includes('avg') && snapshot.volume === undefined && value) snapshot.volume = parseCompactNumber(value)
+    if (label.includes('avg volume') && snapshot.avg_volume === undefined && value) snapshot.avg_volume = parseCompactNumber(value)
+    if (label.includes('market cap') && snapshot.market_cap === undefined && value) snapshot.market_cap = parseCompactNumber(value)
+    if ((label.includes('p/e') || label.includes('pe')) && !label.includes('forward') && snapshot.pe === undefined && value) snapshot.pe = parseSignedFloat(value)
+    if ((label.includes('forward p/e') || label.includes('forward pe') || label.includes('fwd p/e')) && snapshot.forward_pe === undefined && value) snapshot.forward_pe = parseSignedFloat(value)
+    if (label.includes('eps growth') && snapshot.eps_growth === undefined && value) snapshot.eps_growth = parsePercentValue(value)
+    if (label.includes('sales growth') && snapshot.sales_growth === undefined && value) snapshot.sales_growth = parsePercentValue(value)
+    if (label.includes('beta') && snapshot.beta === undefined && value) snapshot.beta = parseSignedFloat(value)
+    if (label.includes('52w high') && snapshot.high_52w === undefined && value) snapshot.high_52w = parseSignedFloat(value)
+    if (label.includes('52w low') && snapshot.low_52w === undefined && value) snapshot.low_52w = parseSignedFloat(value)
+    if (label.includes('insider ownership') && snapshot.insider_ownership === undefined && value) snapshot.insider_ownership = parsePercentValue(value)
+    if (label.includes('institutional ownership') && snapshot.institutional_ownership === undefined && value) snapshot.institutional_ownership = parsePercentValue(value)
+  }
+
+  const hasMetrics = [snapshot.price, snapshot.change_value, snapshot.change_pct, snapshot.volume, snapshot.avg_volume, snapshot.market_cap, snapshot.pe, snapshot.forward_pe, snapshot.eps_growth, snapshot.sales_growth, snapshot.beta, snapshot.high_52w, snapshot.low_52w, snapshot.insider_ownership, snapshot.institutional_ownership].some((value) => value !== null && value !== undefined)
+  if (!hasMetrics) return null
+
+  return {
+    ticker: snapshot.ticker ?? requestedTicker,
+    price: snapshot.price ?? null,
+    change_value: snapshot.change_value ?? null,
+    change_pct: snapshot.change_pct ?? null,
+    volume: snapshot.volume ?? null,
+    avg_volume: snapshot.avg_volume ?? null,
+    market_cap: snapshot.market_cap ?? null,
+    pe: snapshot.pe ?? null,
+    forward_pe: snapshot.forward_pe ?? null,
+    eps_growth: snapshot.eps_growth ?? null,
+    sales_growth: snapshot.sales_growth ?? null,
+    beta: snapshot.beta ?? null,
+    high_52w: snapshot.high_52w ?? null,
+    low_52w: snapshot.low_52w ?? null,
+    insider_ownership: snapshot.insider_ownership ?? null,
+    institutional_ownership: snapshot.institutional_ownership ?? null,
+    source: snapshot.source ?? 'FINVIZ',
+    updated_at: snapshot.updated_at ?? new Date().toISOString(),
+  }
 }
 
 function normalizeSecUrl(value: string): string {
@@ -630,6 +742,7 @@ async function scrapeFinvizDetailed({ ticker }: { ticker: string }): Promise<Fin
     for (const trade of insiderTrades) {
       trade.content_hash = await generateIdentityHash('finviz:insider-trade', [trade.ticker, trade.insider_name, trade.relationship, trade.transaction_date, trade.transaction, trade.cost, trade.shares, trade.value, trade.shares_total, trade.sec_form4_url])
     }
+    const marketData = extractMarketSnapshot(pageHtml, requestedTicker)
 
     let filings: FinvizFilingDraft[] = []
     try {
@@ -641,7 +754,7 @@ async function scrapeFinvizDetailed({ ticker }: { ticker: string }): Promise<Fin
       filings = []
     }
 
-    return { news: dedupedItems, analystRatings, insiderTrades, filings }
+    return { news: dedupedItems, analystRatings, insiderTrades, filings, marketData }
 }
 
 export const finvizScraper: Scraper & { scrapeDetailed(input: { ticker: string }): Promise<FinvizScrapeResult> } = {

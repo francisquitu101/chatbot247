@@ -23,6 +23,8 @@ export function NotificationPreferences() {
         return
       }
 
+      const client: NonNullable<typeof supabase> = supabase
+
       const {
         data: { user },
       } = await supabase.auth.getUser()
@@ -32,7 +34,7 @@ export function NotificationPreferences() {
         return
       }
 
-      const { data, error: fetchError } = await supabase
+      const { data, error: fetchError } = await client
         .from('notification_preferences')
         .select('*')
         .eq('user_id', user.id)
@@ -41,7 +43,7 @@ export function NotificationPreferences() {
       if (fetchError) {
         if (fetchError.code === 'PGRST116') {
           // No preferences found, create default ones
-          const { data: newPrefs, error: createError } = await supabase
+          const { data: newPrefs, error: createError } = await client
             .from('notification_preferences')
             .insert({
               user_id: user.id,
@@ -56,12 +58,12 @@ export function NotificationPreferences() {
             .single()
 
           if (createError) throw createError
-          setPrefs(newPrefs as NotificationPreferences)
+          setPrefs(newPrefs as unknown as NotificationPreferences)
         } else {
           throw fetchError
         }
       } else {
-        setPrefs(data as NotificationPreferences)
+        setPrefs(data as unknown as NotificationPreferences)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load preferences')
@@ -73,12 +75,14 @@ export function NotificationPreferences() {
   async function savePreferences(updates: Partial<NotificationPreferences>) {
     if (!prefs || !supabase) return
 
+    const client: NonNullable<typeof supabase> = supabase
+
     try {
       setSaving(true)
       setError(null)
       setSuccess(false)
 
-      const { error: updateError } = await supabase
+      const { error: updateError } = await client
         .from('notification_preferences')
         .update(updates)
         .eq('user_id', prefs.user_id)

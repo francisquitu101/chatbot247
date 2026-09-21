@@ -23,7 +23,11 @@ function getSecretApiKey(name = 'watchlistscheduler'): string {
   }
 
   const rawKeys = Deno.env.get('SUPABASE_SECRET_KEYS')
-  if (!rawKeys) throw new Error('BACKEND_CONFIG_MISSING')
+  if (!rawKeys) {
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    if (serviceRoleKey) return serviceRoleKey
+    throw new Error('BACKEND_CONFIG_MISSING')
+  }
 
   try {
     const keys = JSON.parse(rawKeys) as Record<string, unknown>
@@ -31,6 +35,8 @@ function getSecretApiKey(name = 'watchlistscheduler'): string {
     if (typeof key !== 'string' || key.length === 0) throw new Error('BACKEND_CONFIG_MISSING')
     return key
   } catch {
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    if (serviceRoleKey) return serviceRoleKey
     throw new Error('BACKEND_CONFIG_MISSING')
   }
 }

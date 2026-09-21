@@ -1,5 +1,5 @@
 import type { ScrapedItemDraft } from './scraper.ts'
-import type { FinvizAnalystRatingDraft, FinvizInsiderTradeDraft } from '../scrape-finviz/scraper.ts'
+import type { FinvizAnalystRatingDraft, FinvizInsiderTradeDraft, FinvizMarketSnapshotDraft } from '../scrape-finviz/scraper.ts'
 import { createBackendClient } from './supabase.ts'
 
 export async function resolveSourceId(slug: string): Promise<string> { const { data, error } = await createBackendClient().from('sources').select('id').eq('slug', slug).eq('enabled', true).maybeSingle(); if (error) throw new Error(`Could not resolve source: ${error.message}`); if (!data) throw new Error(`Source '${slug}' was not found or is disabled`); return data.id }
@@ -278,4 +278,12 @@ export function saveFinvizAnalystRatings(items: FinvizAnalystRatingDraft[]): Pro
 
 export function saveFinvizInsiderTrades(items: FinvizInsiderTradeDraft[]): Promise<SaveStructuredFinvizResult> {
 	return saveStructuredFinvizRecords('finviz_insider_trades', items)
+}
+
+export async function saveFinvizMarketSnapshots(items: FinvizMarketSnapshotDraft[]): Promise<{ new: number }> {
+	if (items.length === 0) return { new: 0 }
+	const client = createBackendClient()
+	const { error } = await client.from('finviz_market_data').insert(items)
+	if (error) throw new Error(`Could not save FINVIZ market snapshot: ${error.message}`)
+	return { new: items.length }
 }

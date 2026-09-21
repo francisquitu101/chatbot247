@@ -2,7 +2,7 @@ import { finvizScraper } from '../scrape-finviz/scraper.ts'
 import { stockTwitsScraper } from '../scrape-stocktwits/scraper.ts'
 import { scrapeSecFilings } from '../scrape-sec/scraper.ts'
 import { createBackendClient } from '../_shared/supabase.ts'
-import { saveFinvizAnalystRatings, saveFinvizInsiderTrades, saveFinvizScrapedItems, saveScrapedItem, saveSecScrapedItems } from '../_shared/repository.ts'
+import { saveFinvizAnalystRatings, saveFinvizInsiderTrades, saveFinvizMarketSnapshots, saveFinvizScrapedItems, saveScrapedItem, saveSecScrapedItems } from '../_shared/repository.ts'
 import { errorResponse, handleOptions, ok } from '../_shared/response.ts'
 
 const MAX_CONCURRENCY = 3
@@ -82,8 +82,18 @@ async function registerNotifications(events: Array<{
   }
 }
 
-function isAuthorized(): boolean {
-  return true
+function getFinvizIngestionKey(): string | null {
+  const raw = Deno.env.get('FINVIZ_INGESTION_KEY')
+  if (typeof raw !== 'string') return null
+  const trimmed = raw.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
+
+function isAuthorized(request: Request): boolean {
+  const expected = getFinvizIngestionKey()
+  if (!expected) return false
+  const provided = request.headers.get('x-finviz-ingestion-key') ?? ''
+  return provided === expected
 }
 
 async function runFinviz(ticker: string) {
@@ -92,9 +102,11 @@ async function runFinviz(ticker: string) {
     let newsPersistence = { new: 0, duplicate: 0, updated: 0 }
     let ratingsPersistence = { new: 0, duplicate: 0 }
     let insiderPersistence = { new: 0, duplicate: 0 }
+    let marketSnapshotPersistence = { new: 0 }
     let newsError: string | null = null
     let ratingsError: string | null = null
     let insiderTradesError: string | null = null
+    let marketSnapshotError: string | null = null
     const notificationEvents: Array<{
       ticker: string
       event_type: 'news' | 'sec' | 'rating' | 'insider'
@@ -168,12 +180,21 @@ async function runFinviz(ticker: string) {
       console.error(JSON.stringify({ event: 'finviz_insider_persistence_error', ticker, error: insiderTradesError }))
     }
 
+    try {
+      if (scrape.marketData) {
+        marketSnapshotPersistence = await saveFinvizMarketSnapshots([scrape.marketData])
+      }
+    } catch (error) {
+      marketSnapshotError = error instanceof Error ? error.message : 'unknown error'
+      console.error(JSON.stringify({ event: 'finviz_market_snapshot_persistence_error', ticker, error: marketSnapshotError }))
+    }
+
     // Register notifications (best effort, don't block scraping)
     await registerNotifications(notificationEvents)
 
-    const errors = [newsError, ratingsError, insiderTradesError].filter(Boolean)
-    const status = errors.length === 0 ? 'ok' : errors.length === 3 ? 'error' : 'partial'
-    return { ok: errors.length === 0, status, found: scrape.news.length, ...newsPersistence, newsFound: scrape.news.length, ratingsFound: scrape.analystRatings.length, insiderTradesFound: scrape.insiderTrades.length, newsNew: newsPersistence.new, ratingsNew: ratingsPersistence.new, insiderTradesNew: insiderPersistence.new, ratingsDuplicate: ratingsPersistence.duplicate, insiderTradesDuplicate: insiderPersistence.duplicate, newsError, ratingsError, insiderTradesError }
+    const errors = [newsError, ratingsError, insiderTradesError, marketSnapshotError].filter(Boolean)
+    const status = errors.length === 0 ? 'ok' : errors.length === 4 ? 'error' : 'partial'
+    return { ok: errors.length === 0, status, found: scrape.news.length, ...newsPersistence, newsFound: scrape.news.length, ratingsFound: scrape.analystRatings.length, insiderTradesFound: scrape.insiderTrades.length, marketSnapshotNew: marketSnapshotPersistence.new, newsNew: newsPersistence.new, ratingsNew: ratingsPersistence.new, insiderTradesNew: insiderPersistence.new, ratingsDuplicate: ratingsPersistence.duplicate, insiderTradesDuplicate: insiderPersistence.duplicate, newsError, ratingsError, insiderTradesError, marketSnapshotError }
   } catch (error) {
     return { ok: false, status: 'error', error: error instanceof Error ? error.message : 'unknown error' }
   }
@@ -262,7 +283,7 @@ Deno.serve(async (request) => {
   const options = handleOptions(request)
   if (options) return options
   if (request.method !== 'POST') return errorResponse('METHOD_NOT_ALLOWED', 'Use POST', 405, request)
-  if (!isAuthorized()) return errorResponse('UNAUTHORIZED', 'Internal scheduler authorization required', 401, request)
+  if (!isAuthorized(request)) return errorResponse('UNAUTHORIZED', 'Internal Finviz ingestion authorization required', 401, request)
   if (cycleRunning) return errorResponse('CYCLE_IN_PROGRESS', 'A watchlist cycle is already running', 409, request)
 
   const startedAt = Date.now()

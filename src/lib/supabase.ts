@@ -1,8 +1,9 @@
 import { createClient } from '@supabase/supabase-js'
 import type { TrackedStock } from '../types'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
-const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+const hasConfig = typeof supabaseUrl === 'string' && supabaseUrl.length > 0 && typeof publishableKey === 'string' && publishableKey.length > 0
 
 export class WatchlistError extends Error {
   status?: number
@@ -16,7 +17,34 @@ export class WatchlistError extends Error {
   }
 }
 
-export const supabase = supabaseUrl && publishableKey ? createClient(supabaseUrl, publishableKey) : null
+export const hasSupabaseConfig = hasConfig
+
+export const supabase = hasSupabaseConfig && supabaseUrl && publishableKey ? createClient(supabaseUrl, publishableKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  },
+}) : null
+
+export function requireSupabaseClient() {
+  if (!supabase) {
+    throw new Error('Supabase configuration is missing. Add VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY before starting the app.')
+  }
+
+  return supabase
+}
+
+export function getAuthRedirectUrl(path = '/app') {
+  const configuredBase = import.meta.env.VITE_SUPABASE_AUTH_REDIRECT_URL || import.meta.env.VITE_APP_URL || window.location.origin
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+
+  try {
+    return new URL(normalizedPath, configuredBase).toString()
+  } catch {
+    return `${window.location.origin}${normalizedPath}`
+  }
+}
 
 export async function updateWatchlist(action: 'enable' | 'disable', ticker: string, accessToken: string): Promise<TrackedStock | null> {
   if (!supabaseUrl || !publishableKey) throw new Error('Supabase configuration is missing')
