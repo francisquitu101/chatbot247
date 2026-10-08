@@ -1016,14 +1016,88 @@ a { text-decoration: none; color: inherit; }
   background: linear-gradient(180deg, #fbfcfb, #f6f8f7);
 }
 
+.luna-sec-explorer {
+  overflow: auto;
+}
+
+.luna-sec-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-content: start;
+  gap: 14px;
+  width: 100%;
+  padding: 20px;
+}
+
+.luna-sec-file {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+  padding: 15px 10px;
+  border: 1px solid #e2e9e5;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.82);
+  color: inherit;
+  text-align: center;
+  text-decoration: none;
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+.luna-sec-file[href]:hover {
+  transform: translateY(-2px);
+  border-color: #a9c7b5;
+  background: #fff;
+}
+
+.luna-sec-file-icon {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 64px;
+  border: 1px solid #dce8e0;
+  border-radius: 9px;
+  background: linear-gradient(145deg, #f4faf6, #e5f1e9);
+  color: #397553;
+}
+
+.luna-sec-file > strong {
+  color: #24372c;
+  font-size: 12px;
+}
+
+.luna-sec-file > span:not(.luna-sec-file-icon) {
+  color: #69776f;
+  font-size: 10px;
+}
+
+.luna-sec-file > small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #77837c;
+  font-size: 10px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.luna-sec-file-link {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  color: #829189;
+}
+
 .luna-table-scroll {
   width: 100%;
   overflow: auto;
 }
 
-.luna-insider-table {
+.luna-financial-table {
   width: 100%;
-  min-width: 760px;
   border-collapse: separate;
   border-spacing: 0;
   color: var(--ink);
@@ -1031,7 +1105,10 @@ a { text-decoration: none; color: inherit; }
   text-align: left;
 }
 
-.luna-insider-table th {
+.luna-insider-table { min-width: 920px; }
+.luna-ratings-table { min-width: 720px; }
+
+.luna-financial-table th {
   position: sticky;
   z-index: 1;
   top: 0;
@@ -1046,14 +1123,34 @@ a { text-decoration: none; color: inherit; }
   white-space: nowrap;
 }
 
-.luna-insider-table td {
+.luna-financial-table td {
   padding: 14px;
   border-bottom: 1px solid #e7ece9;
   vertical-align: top;
   line-height: 1.5;
 }
 
-.luna-insider-table tbody tr:hover { background: #f2f7f4; }
+.luna-insider-identity {
+  display: grid;
+  gap: 3px;
+  min-width: 125px;
+}
+
+.luna-insider-identity small {
+  color: #77837c;
+  font-size: 10px;
+}
+
+.luna-financial-table tbody tr:hover { background: #f2f7f4; }
+
+.luna-table-link {
+  color: #176b46;
+  font-weight: 650;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.luna-table-link:hover { text-decoration: underline; }
 
 .luna-filing-badge {
   display: inline-flex;
@@ -1160,6 +1257,14 @@ a { text-decoration: none; color: inherit; }
   }
 
   .luna-titlebar { min-height: 36px; }
+
+  .luna-sec-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px;
+    padding: 12px;
+  }
+
+  .luna-sec-file { padding: 12px 7px; }
 
   .luna-window-footer {
     align-items: stretch;

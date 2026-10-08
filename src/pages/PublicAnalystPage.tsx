@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { ArrowRight, ChartColumnIncreasing, Chrome, FolderOpen, LogOut, RefreshCw, Star } from 'lucide-react'
+import { ArrowRight, ChartColumnIncreasing, Chrome, ExternalLink, FileText, FolderOpen, LogOut, RefreshCw, Star } from 'lucide-react'
 import { getPrivateAnalystByTicker, getPublicAnalystByTicker } from '../lib/analystData'
+import { getFinvizCompanyActivity } from '../lib/queries/company'
 import { getAuthRedirectUrl, supabase } from '../lib/supabase'
 
 const DEMO_PATTERNS = [/\[DEMO SEEDED\]/i, /demo_seed/i, /synthetic_test/i, /demo seed/i, /synthetic/i, /development test/i]
@@ -82,10 +83,6 @@ function getFilingType(evidence: { title?: string | null; raw_metadata?: Record<
   return titleMatch?.[1]?.toUpperCase() ?? null
 }
 
-function isForm4(filingType: string | null): boolean {
-  return filingType === '4' || filingType === '4/A'
-}
-
 export function AnalystExperienceDisplay({
   ticker,
   privateView = false,
@@ -106,6 +103,7 @@ export function AnalystExperienceDisplay({
   const [enqueueError, setEnqueueError] = useState<string | null>(null)
   const [activeApp, setActiveApp] = useState<AnalystApp>('sec')
   const [data, setData] = useState<Awaited<ReturnType<typeof getPublicAnalystByTicker>> | null>(null)
+  const [finvizActivity, setFinvizActivity] = useState<Awaited<ReturnType<typeof getFinvizCompanyActivity>>>({ ratings: [], insiderTrades: [] })
 
   const activeTicker = useMemo(() => (ticker ?? 'NVDA').toUpperCase(), [ticker])
 
@@ -178,9 +176,11 @@ export function AnalystExperienceDisplay({
             return getPrivateAnalystByTicker(client, activeTicker, user.id)
           })()
           : await getPublicAnalystByTicker(client, activeTicker)
+        const marketActivity = await getFinvizCompanyActivity(client, activeTicker)
 
         if (!isMounted) return
         setData(result)
+        setFinvizActivity(marketActivity)
       } catch (fetchError) {
         if (!isMounted) return
         setError(fetchError instanceof Error ? fetchError.message : 'Unable to load analyst.')
@@ -198,13 +198,15 @@ export function AnalystExperienceDisplay({
       .on('postgres_changes', { event: '*', schema: 'public', table: 'analyst_state' }, () => { void loadAnalyst() })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'decision_events' }, () => { void loadAnalyst() })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'analyst_jobs' }, () => { void loadAnalyst() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'finviz_insider_trades', filter: `ticker=eq.${activeTicker}` }, () => { void loadAnalyst() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'finviz_analyst_ratings', filter: `ticker=eq.${activeTicker}` }, () => { void loadAnalyst() })
       .subscribe()
 
     return () => {
       isMounted = false
       void client.removeChannel(channel)
     }
-  }, [activeTicker, privateView])
+  }, [activeTicker, privateView, session?.user.id])
 
   const evidenceList = getRealEvidence(data?.evidenceItems)
   const processingStatus = typeof data?.state?.processing_status === 'string' ? data.state.processing_status : 'idle'
@@ -237,7 +239,6 @@ export function AnalystExperienceDisplay({
     const evidence = run.evidence_id ? evidenceById.get(run.evidence_id) ?? null : null
     const evidenceTitle = evidence?.title ? cleanupDisplayText(evidence.title) : null
     const evidenceSourceType = evidence?.source_type ? evidence.source_type.toUpperCase() : null
-    const filingType = getFilingType(evidence)
     const evidencePublishedAt = evidence?.published_at ?? null
     const evidenceSourceDate = formatFilingDate(evidencePublishedAt)
     const thesisSummary = readText(result?.thesisSummary)
@@ -271,12 +272,7 @@ export function AnalystExperienceDisplay({
       fairValueText,
       source: sourceContext,
       sourceDate: evidenceSourceDate,
-      filingType,
-      isSecFiling: evidenceSourceType === 'SEC',
-      isForm4: isForm4(filingType),
       confidence: confidenceValue !== undefined ? `Confidence ${confidenceValue}%` : null,
-      confidenceValue,
-      impact: impact ? impact.toUpperCase() : 'NEUTRAL',
       meta: [
         impact && (thesisChanged || valuationChanged) ? `Impact ${impact}` : null,
         materiality && (thesisChanged || valuationChanged) ? `Materiality ${materiality}` : null,
@@ -284,8 +280,7 @@ export function AnalystExperienceDisplay({
     }
   })
 
-  const secTranscript = researchTranscript.filter((message) => message.isSecFiling && !message.isForm4)
-  const insiderTranscript = researchTranscript.filter((message) => message.isSecFiling && message.isForm4)
+  const secFiles = evidenceList.filter((item) => item.source_type?.toUpperCase() === 'SEC')
   const activeTitle = {
     sec: 'SEC Filings',
     insider: 'Insider Tracker',
@@ -386,10 +381,137 @@ export function AnalystExperienceDisplay({
 
         {authError && <div className="luna-auth-error">{authError}</div>}
 
-        {activeApp === 'sec' && <main className="luna-chat-feed" aria-live="polite">
-          {secTranscript.length === 0 ? (
-            <div className="empty-research-state">No analyzed SEC filings are available yet.</div>
-          ) : secTranscript.map((message) => (
+        {activeApp === 'sec' && (
+          <main className="luna-data-view luna-sec-explorer">
+            {secFiles.length === 0 ? (
+              <div className="luna-placeholder-state">
+                <FolderOpen size={28} />
+                <strong>No SEC filings available</strong>
+                <span>Original filing documents will appear here when available.</span>
+              </div>
+            ) : (
+              <div className="luna-sec-grid">
+                {secFiles.map((file) => {
+                  const filingType = getFilingType(file) ?? 'SEC Filing'
+                  const fileContents = (
+                    <>
+                      <span className="luna-sec-file-icon"><FileText size={34} strokeWidth={1.5} /></span>
+                      <strong>{filingType}</strong>
+                      <span>{formatFilingDate(file.published_at)}</span>
+                      <small>{cleanupDisplayText(file.title)}</small>
+                      {file.source_url && <ExternalLink size={13} className="luna-sec-file-link" aria-hidden="true" />}
+                    </>
+                  )
+                  return file.source_url ? (
+                    <a key={file.id} className="luna-sec-file" href={file.source_url} target="_blank" rel="noreferrer" aria-label={`${filingType}: ${file.title}`}>
+                      {fileContents}
+                    </a>
+                  ) : (
+                    <div key={file.id} className="luna-sec-file" aria-label={`${filingType}: ${file.title}`}>
+                      {fileContents}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </main>
+        )}
+
+        {activeApp === 'insider' && (
+          <main className="luna-data-view">
+            {finvizActivity.insiderTrades.length === 0 ? (
+              <div className="luna-placeholder-state">
+                <ChartColumnIncreasing size={26} />
+                <strong>{session ? 'No insider transactions available' : 'Sign in to view insider transactions'}</strong>
+                <span>{session ? 'Finviz insider transactions will appear here when available.' : 'Finviz market data is available to authenticated users.'}</span>
+              </div>
+            ) : (
+              <div className="luna-table-scroll">
+                <table className="luna-financial-table luna-insider-table">
+                  <thead>
+                    <tr>
+                      <th>Relationship</th>
+                      <th>Date</th>
+                      <th>Transaction</th>
+                      <th>Cost</th>
+                      <th>#Shares</th>
+                      <th>Value ($)</th>
+                      <th>#Shares Total</th>
+                      <th>SEC Form 4</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {finvizActivity.insiderTrades.map((trade) => (
+                      <tr key={trade.id}>
+                        <td>
+                          <div className="luna-insider-identity">
+                            <span>{trade.relationship || '—'}</span>
+                            {trade.insider_name && <small>{trade.insider_name}</small>}
+                          </div>
+                        </td>
+                        <td>{formatFilingDate(trade.transaction_date)}</td>
+                        <td>{trade.transaction || '—'}</td>
+                        <td>{trade.cost || '—'}</td>
+                        <td>{trade.shares || '—'}</td>
+                        <td>{trade.value || '—'}</td>
+                        <td>{trade.shares_total || '—'}</td>
+                        <td>
+                          {trade.sec_form4_url ? (
+                            <a href={trade.sec_form4_url} target="_blank" rel="noreferrer" className="luna-table-link">
+                              View filing
+                            </a>
+                          ) : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </main>
+        )}
+
+        {activeApp === 'ratings' && (
+          <main className="luna-data-view">
+            {finvizActivity.ratings.length === 0 ? (
+              <div className="luna-placeholder-state">
+                <Star size={26} />
+                <strong>{session ? 'No analyst ratings available' : 'Sign in to view analyst ratings'}</strong>
+                <span>{session ? 'Finviz analyst ratings will appear here when available.' : 'Finviz market data is available to authenticated users.'}</span>
+              </div>
+            ) : (
+              <div className="luna-table-scroll">
+                <table className="luna-financial-table luna-ratings-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Action</th>
+                      <th>Analyst</th>
+                      <th>Rating Change</th>
+                      <th>Price Target Change</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {finvizActivity.ratings.map((rating) => (
+                      <tr key={rating.id}>
+                        <td>{formatFilingDate(rating.rating_date)}</td>
+                        <td>{rating.action || '—'}</td>
+                        <td>{rating.analyst || '—'}</td>
+                        <td>{rating.rating_change || '—'}</td>
+                        <td>{rating.price_target_change || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </main>
+        )}
+
+        {activeApp === 'analysis' && <main className="luna-chat-feed" aria-live="polite">
+          {researchTranscript.length === 0 ? (
+            <div className="empty-research-state">No LUNA analysis is available yet.</div>
+          ) : researchTranscript.map((message) => (
             <article key={message.id} className={`luna-chat-message ${message.kind}`}>
               {message.source && (
                 <div className="luna-source-block">
@@ -416,11 +538,7 @@ export function AnalystExperienceDisplay({
                 </div>
               )}
 
-              {message.confidence && (
-                <div className="luna-chat-confidence">
-                  <span>{message.confidence}</span>
-                </div>
-              )}
+              {message.confidence && <div className="luna-chat-confidence"><span>{message.confidence}</span></div>}
 
               {message.meta.length > 0 && (
                 <div className="mini-meta-row subtle">
@@ -431,64 +549,12 @@ export function AnalystExperienceDisplay({
           ))}
         </main>}
 
-        {activeApp === 'insider' && (
-          <main className="luna-data-view">
-            {insiderTranscript.length === 0 ? (
-              <div className="luna-placeholder-state">
-                <ChartColumnIncreasing size={26} />
-                <strong>No Form 4 analysis yet</strong>
-                <span>Processed insider filings will appear here as a table.</span>
-              </div>
-            ) : (
-              <div className="luna-table-scroll">
-                <table className="luna-insider-table">
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Filing Type</th>
-                      <th>Impact/Action</th>
-                      <th>LUNA Assessment</th>
-                      <th>Confidence</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {insiderTranscript.map((message) => (
-                      <tr key={message.id}>
-                        <td>{formatFilingDate(message.stamp)}</td>
-                        <td><span className="luna-filing-badge">{message.filingType ?? 'Form 4'}</span></td>
-                        <td>{message.impact}{message.label ? ` · ${message.label}` : ''}</td>
-                        <td>
-                          <div className="luna-assessment-cell">
-                            <span>{message.primaryText ?? '—'}</span>
-                            {message.source && <small>{message.source}</small>}
-                          </div>
-                        </td>
-                        <td>{message.confidenceValue === undefined ? '—' : `${message.confidenceValue}%`}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </main>
-        )}
-
-        {(activeApp === 'ratings' || activeApp === 'analysis') && (
-          <main className="luna-data-view">
-            <div className="luna-placeholder-state">
-              {activeApp === 'ratings' ? <Star size={26} /> : <FolderOpen size={26} />}
-              <strong>{activeTitle}</strong>
-              <span>Awaiting external data connection...</span>
-            </div>
-          </main>
-        )}
-
         <footer className="luna-window-footer">
           <div className="luna-enqueue-feedback" aria-live="polite">
             {enqueueError && <span className="luna-enqueue-error">{enqueueError}</span>}
             {enqueueMessage && <span className="luna-enqueue-success">{enqueueMessage}</span>}
           </div>
-          {activeApp === 'sec' && session && evidenceList.some((item) => item.source_type?.toUpperCase() === 'SEC') && (
+          {activeApp === 'analysis' && session && secFiles.length > 0 && (
             <button
               type="button"
               className="luna-enqueue-button"
