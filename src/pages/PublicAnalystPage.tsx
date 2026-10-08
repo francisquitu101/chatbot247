@@ -341,10 +341,7 @@ export function AnalystExperienceDisplay({
             <span className="luna-window-control minimize" />
             <span className="luna-window-control maximize" />
           </div>
-          <span className="luna-titlebar-label luna-brand-title">
-            <img src="/branding/marketmole-icon.png" alt="" />
-            <span>MarketMole · {activeTitle}</span>
-          </span>
+          <span className="luna-titlebar-label">{activeTitle}</span>
           <span className="luna-titlebar-spacer" aria-hidden="true" />
         </div>
         <header className="luna-window-header">
@@ -353,6 +350,9 @@ export function AnalystExperienceDisplay({
             <span className="luna-mini-name">MarketMole</span>
             <span className="luna-mini-divider">·</span>
             <span className="luna-mini-ticker">{activeTicker}</span>
+            {activeTicker === 'NVDA' && (
+              <img className="luna-ticker-logo" src="/branding/nvidia-logo.svg" alt="NVIDIA" />
+            )}
           </div>
 
           <div className="luna-header-actions">

@@ -376,6 +376,13 @@ a { text-decoration: none; color: inherit; }
   font-weight: 700;
 }
 
+.luna-ticker-logo {
+  width: 21px;
+  height: 21px;
+  margin-left: 2px;
+  object-fit: contain;
+}
+
 .luna-mini-divider {
   color: var(--muted);
 }
