@@ -181,7 +181,7 @@ export function AnalystExperienceDisplay({
 
   const activeTicker = useMemo(() => (ticker ?? 'NVDA').toUpperCase(), [ticker])
 
-  async function handleSummarizeNews(articleId: string, articleUrl: string | null) {
+  async function handleSummarizeNews(articleId: string, articleUrl: string | null, articleTitle: string) {
     setBriefingArticleId(articleId)
     const existingBriefing = newsBriefings[articleId]
     if (existingBriefing?.status === 'loading' || existingBriefing?.status === 'success') return
@@ -195,7 +195,7 @@ export function AnalystExperienceDisplay({
       const { data: result, error: invocationError } = await supabase.functions.invoke<{
         success: boolean
         data?: { summary?: string }
-      }>('summarize-news', { body: { url: articleUrl } })
+      }>('summarize-news', { body: { url: articleUrl, title: articleTitle } })
       if (invocationError) throw invocationError
       const summary = result?.success === true && typeof result.data?.summary === 'string'
         ? result.data.summary.trim()
@@ -719,7 +719,7 @@ export function AnalystExperienceDisplay({
                             setBriefingArticleId(null)
                             return
                           }
-                          void handleSummarizeNews(item.id, articleUrl)
+                          void handleSummarizeNews(item.id, articleUrl, item.title?.trim() || headline)
                         }}
                       >
                         <Brain size={13} aria-hidden="true" />
