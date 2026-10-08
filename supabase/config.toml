@@ -382,6 +382,9 @@ verify_jwt = false
 [functions.run-analyst-worker]
 verify_jwt = false
 
+[functions.enqueue-sec-analysis]
+verify_jwt = true
+
 [edge_runtime]
 enabled = true
 # Supported request policies: `oneshot`, `per_worker`.

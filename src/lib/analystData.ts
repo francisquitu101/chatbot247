@@ -93,6 +93,7 @@ export type EvidenceRecord = {
   title: string
   published_at: string | null
   summary: string | null
+  raw_metadata?: Record<string, unknown> | null
 }
 
 async function getAnalystByTicker(client: SupabaseClient, ticker: string, visibility: { public: true } | { userId: string }) {
@@ -123,7 +124,7 @@ async function getAnalystByTicker(client: SupabaseClient, ticker: string, visibi
     client.from('valuation_versions').select('*').eq('analyst_id', analyst.id).order('date', { ascending: false }).limit(8),
     client.from('decision_events').select('*').eq('analyst_id', analyst.id).order('timestamp', { ascending: false }).limit(20),
     client.from('analyst_evidence')
-      .select('id, evidence_items!inner(id, ticker, source_type, source_url, title, published_at, summary)')
+      .select('id, evidence_items!inner(id, ticker, source_type, source_url, title, published_at, summary, raw_metadata)')
       .eq('analyst_id', analyst.id)
       .order('created_at', { ascending: false })
       .limit(20),

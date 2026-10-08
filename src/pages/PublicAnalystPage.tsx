@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { ArrowRight, Chrome, LogOut } from 'lucide-react'
+import { ArrowRight, ChartColumnIncreasing, Chrome, FolderOpen, LogOut, RefreshCw, Star } from 'lucide-react'
 import { getPrivateAnalystByTicker, getPublicAnalystByTicker } from '../lib/analystData'
-import { type NormalizedMarketSnapshot } from '../lib/marketData'
 import { getAuthRedirectUrl, supabase } from '../lib/supabase'
 
 const DEMO_PATTERNS = [/\[DEMO SEEDED\]/i, /demo_seed/i, /synthetic_test/i, /demo seed/i, /synthetic/i, /development test/i]
@@ -23,36 +22,6 @@ function formatMoney(value: number | null | undefined) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(value)
 }
 
-function formatSignedPrice(value: number | null | undefined) {
-  if (typeof value !== 'number' || Number.isNaN(value)) return '—'
-  return `${value >= 0 ? '+' : '-'}${formatMoney(Math.abs(value))}`
-}
-
-function formatSignedPercent(value: number | null | undefined, digits = 2) {
-  if (typeof value !== 'number' || Number.isNaN(value)) return '—'
-  return `${value >= 0 ? '+' : ''}${value.toFixed(digits)}%`
-}
-
-function formatCompactNumber(value: number | null | undefined) {
-  if (typeof value !== 'number' || Number.isNaN(value)) return '—'
-  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`
-  return value.toLocaleString('en-US')
-}
-
-function format52wRange(low: number | null | undefined, high: number | null | undefined) {
-  if (typeof low !== 'number' || typeof high !== 'number') return '—'
-  return `${formatMoney(low)} - ${formatMoney(high)}`
-}
-
-function formatDate(value: string | null | undefined) {
-  if (!value) return '—'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '—'
-  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date)
-}
-
 function formatLunaTimestamp(value: string | null | undefined) {
   if (!value) return '—'
   const date = new Date(value)
@@ -67,58 +36,11 @@ function formatFilingDate(value: string | null | undefined) {
   return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(date)
 }
 
-function formatClock(value: string | null | undefined) {
-  if (!value) return '—'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '—'
-  return new Intl.DateTimeFormat('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }).format(date)
-}
-
-function toReadableList(values: Array<unknown> | undefined | null) {
-  return (values ?? []).flatMap((item) => {
-    if (typeof item === 'string') return item.trim() ? [item.trim()] : []
-    if (item && typeof item === 'object' && 'name' in item && typeof item.name === 'string') return [item.name]
-    return []
-  })
-}
-
 function getStatusLabel(processingStatus: string | undefined | null) {
   const normalized = (processingStatus ?? 'idle').toLowerCase()
   if (normalized.includes('error')) return 'ERROR'
   if (normalized.includes('process') || normalized.includes('analyz') || normalized.includes('read') || normalized.includes('search') || normalized.includes('updat') || normalized.includes('queue')) return 'PROCESSING'
-  return 'MONITORING'
-}
-
-function getFreshnessLabel(updatedAt: string | null | undefined) {
-  if (!updatedAt) return 'STALE'
-  const ageMinutes = (Date.now() - new Date(updatedAt).getTime()) / 60000
-  return ageMinutes <= 30 ? 'FRESH' : 'STALE'
-}
-
-function getRealDecisionEvents(
-  list: Array<{
-    id?: string | null
-    event?: string | null
-    reasoning_summary?: string | null
-    source?: string | null
-    source_type?: string | null
-    impact?: string | null
-    evidence?: string | null
-    timestamp?: string | null
-  }> | undefined | null,
-) {
-  return (list ?? []).filter((event) => {
-    if (!event) return false
-    const combined = [
-      event.event,
-      event.reasoning_summary,
-      event.source,
-      event.source_type,
-      event.impact,
-      event.evidence,
-    ].filter((value): value is string => typeof value === 'string')
-    return combined.length === 0 || !combined.some((value) => isDemoArtifact(value))
-  })
+  return ''
 }
 
 function getRealEvidence(
@@ -149,6 +71,21 @@ function readText(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null
 }
 
+type AnalystApp = 'sec' | 'insider' | 'ratings' | 'analysis'
+
+function getFilingType(evidence: { title?: string | null; raw_metadata?: Record<string, unknown> | null } | null): string | null {
+  if (!evidence) return null
+  const metadata = evidence.raw_metadata
+  const rawForm = metadata?.form ?? metadata?.form_type ?? metadata?.formType
+  if (typeof rawForm === 'string' && rawForm.trim()) return rawForm.trim().toUpperCase()
+  const titleMatch = evidence.title?.match(/\b(?:FORM\s*)?([0-9][A-Z]?\/?A?)\b/i)
+  return titleMatch?.[1]?.toUpperCase() ?? null
+}
+
+function isForm4(filingType: string | null): boolean {
+  return filingType === '4' || filingType === '4/A'
+}
+
 export function AnalystExperienceDisplay({
   ticker,
   privateView = false,
@@ -164,9 +101,11 @@ export function AnalystExperienceDisplay({
   const [error, setError] = useState<string | null>(null)
   const [authError, setAuthError] = useState<string | null>(null)
   const [authBusy, setAuthBusy] = useState(false)
+  const [enqueueBusy, setEnqueueBusy] = useState(false)
+  const [enqueueMessage, setEnqueueMessage] = useState<string | null>(null)
+  const [enqueueError, setEnqueueError] = useState<string | null>(null)
+  const [activeApp, setActiveApp] = useState<AnalystApp>('sec')
   const [data, setData] = useState<Awaited<ReturnType<typeof getPublicAnalystByTicker>> | null>(null)
-  const [marketSnapshot, setMarketSnapshot] = useState<NormalizedMarketSnapshot | null>(null)
-  const [trackedCompanies, setTrackedCompanies] = useState<Array<{ ticker: string; company_name: string | null }>>([])
 
   const activeTicker = useMemo(() => (ticker ?? 'NVDA').toUpperCase(), [ticker])
 
@@ -193,6 +132,28 @@ export function AnalystExperienceDisplay({
     }
   }
 
+  async function handleEnqueueAnalysis() {
+    if (!supabase || !session || enqueueBusy) return
+    setEnqueueBusy(true)
+    setEnqueueMessage(null)
+    setEnqueueError(null)
+    try {
+      const { data: response, error: invokeError } = await supabase.functions.invoke<{
+        outcome: 'QUEUED' | 'ALREADY_QUEUED'
+        filing?: string
+      }>('enqueue-sec-analysis', { body: { ticker: activeTicker } })
+      if (invokeError) throw invokeError
+      if (!response) throw new Error('The enqueue endpoint returned no response.')
+      setEnqueueMessage(response.outcome === 'ALREADY_QUEUED'
+        ? 'An analysis for the latest SEC filing is already queued.'
+        : 'Latest SEC filing queued for durable analysis.')
+    } catch (enqueueFailure) {
+      setEnqueueError(enqueueFailure instanceof Error ? enqueueFailure.message : 'Unable to queue SEC analysis.')
+    } finally {
+      setEnqueueBusy(false)
+    }
+  }
+
   useEffect(() => {
     let isMounted = true
 
@@ -209,42 +170,6 @@ export function AnalystExperienceDisplay({
         setLoading(true)
         setError(null)
 
-        const { data: sessionData } = await client.auth.getSession()
-        const isSignedIn = Boolean(sessionData.session)
-
-        let companyRows: Array<{ ticker: string; company_name: string | null }> = []
-
-        if (isSignedIn) {
-          const companiesResult = await client
-            .from('tracked_stocks')
-            .select('ticker, company_name')
-            .eq('enabled', true)
-            .order('ticker', { ascending: true })
-
-          if (companiesResult.error) {
-            console.warn('Tracked stocks lookup failed for authenticated user', companiesResult.error)
-          } else {
-            companyRows = (companiesResult.data ?? []).filter((row) => typeof row?.ticker === 'string' && row.ticker.trim().length > 0)
-          }
-        }
-
-        const tickers = companyRows.map((row) => row.ticker.toUpperCase())
-
-        const marketResult = tickers.length > 0
-          ? await client
-              .from('finviz_market_data')
-              .select('*')
-              .in('ticker', tickers)
-              .order('updated_at', { ascending: false })
-          : { data: [] as Record<string, unknown>[] }
-
-        const latestMarketByTicker = new Map<string, Record<string, unknown>>()
-        for (const row of marketResult.data ?? []) {
-          const tickerValue = typeof row?.ticker === 'string' ? row.ticker.toUpperCase() : null
-          if (!tickerValue || latestMarketByTicker.has(tickerValue)) continue
-          latestMarketByTicker.set(tickerValue, row)
-        }
-
         const result = privateView
           ? await (async () => {
             const { data: { user }, error: userError } = await client.auth.getUser()
@@ -254,22 +179,8 @@ export function AnalystExperienceDisplay({
           })()
           : await getPublicAnalystByTicker(client, activeTicker)
 
-        const { data: marketData, error: marketError } = await client
-          .from('finviz_market_data')
-          .select('*')
-          .eq('ticker', activeTicker)
-          .order('updated_at', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-
-        if (marketError) {
-          console.warn('Market data lookup failed', marketError)
-        }
-
         if (!isMounted) return
-        setTrackedCompanies(companyRows)
         setData(result)
-        setMarketSnapshot(marketData as NormalizedMarketSnapshot | null)
       } catch (fetchError) {
         if (!isMounted) return
         setError(fetchError instanceof Error ? fetchError.message : 'Unable to load analyst.')
@@ -286,6 +197,7 @@ export function AnalystExperienceDisplay({
       .channel(`analyst-live-${activeTicker}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'analyst_state' }, () => { void loadAnalyst() })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'decision_events' }, () => { void loadAnalyst() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'analyst_jobs' }, () => { void loadAnalyst() })
       .subscribe()
 
     return () => {
@@ -294,25 +206,19 @@ export function AnalystExperienceDisplay({
     }
   }, [activeTicker, privateView])
 
-  const analyst = data?.analyst ?? null
-  const thesis = data?.thesisHistory?.[0] ?? null
-  const thesisHistory = data?.thesisHistory ?? []
-  const thesisSummary = analyst ? cleanupDisplayText(thesis?.summary ?? analyst.current_thesis ?? 'No thesis available yet.') : '—'
-  const assumptions = toReadableList(thesis?.assumptions as unknown[] | undefined)
-  const decisionList = getRealDecisionEvents(data?.decisionEvents)
   const evidenceList = getRealEvidence(data?.evidenceItems)
-  const valuationList = data?.valuationHistory ?? []
   const processingStatus = typeof data?.state?.processing_status === 'string' ? data.state.processing_status : 'idle'
   const hasActiveRun = (data?.runs ?? []).some((run: { status: string }) => run.status === 'started')
   const hasProcessingJob = (data?.jobs ?? []).some((job: { status: string }) => job.status === 'processing')
   const isStaleProcessingState = processingStatus === 'analyzing' && !hasActiveRun && !hasProcessingJob
-  const statusLabel = isStaleProcessingState ? 'MONITORING' : getStatusLabel(processingStatus)
-  const marketPrice = marketSnapshot?.price ?? null
-  const marketSource = marketSnapshot?.source ?? 'FINVIZ'
-  const marketFreshness = getFreshnessLabel(marketSnapshot?.updatedAt ?? null)
-  const companyName = analyst ? cleanupDisplayText(analyst.company_name ?? '—') : '—'
-  const aiSummary = thesisSummary === '—' ? 'Awaiting the next real analyst update.' : thesisSummary
-  const statusTone = statusLabel === 'ERROR' ? 'error' : statusLabel === 'PROCESSING' ? 'active' : 'idle'
+  const statusLabel = isStaleProcessingState ? '' : getStatusLabel(processingStatus)
+  const statusTone = statusLabel === 'ERROR' ? 'error' : 'active'
+  const desktopSources = [
+    { id: 'sec' as const, label: 'SEC Filings', Icon: FolderOpen },
+    { id: 'insider' as const, label: 'Insider Trading', Icon: ChartColumnIncreasing },
+    { id: 'ratings' as const, label: 'Analyst Ratings', Icon: Star },
+    { id: 'analysis' as const, label: 'Analysis', Icon: FolderOpen },
+  ]
 
   const realRuns = (data?.runs ?? []).filter((run) => {
     if (!run) return false
@@ -331,6 +237,7 @@ export function AnalystExperienceDisplay({
     const evidence = run.evidence_id ? evidenceById.get(run.evidence_id) ?? null : null
     const evidenceTitle = evidence?.title ? cleanupDisplayText(evidence.title) : null
     const evidenceSourceType = evidence?.source_type ? evidence.source_type.toUpperCase() : null
+    const filingType = getFilingType(evidence)
     const evidencePublishedAt = evidence?.published_at ?? null
     const evidenceSourceDate = formatFilingDate(evidencePublishedAt)
     const thesisSummary = readText(result?.thesisSummary)
@@ -364,7 +271,12 @@ export function AnalystExperienceDisplay({
       fairValueText,
       source: sourceContext,
       sourceDate: evidenceSourceDate,
+      filingType,
+      isSecFiling: evidenceSourceType === 'SEC',
+      isForm4: isForm4(filingType),
       confidence: confidenceValue !== undefined ? `Confidence ${confidenceValue}%` : null,
+      confidenceValue,
+      impact: impact ? impact.toUpperCase() : 'NEUTRAL',
       meta: [
         impact && (thesisChanged || valuationChanged) ? `Impact ${impact}` : null,
         materiality && (thesisChanged || valuationChanged) ? `Materiality ${materiality}` : null,
@@ -372,12 +284,21 @@ export function AnalystExperienceDisplay({
     }
   })
 
+  const secTranscript = researchTranscript.filter((message) => message.isSecFiling && !message.isForm4)
+  const insiderTranscript = researchTranscript.filter((message) => message.isSecFiling && message.isForm4)
+  const activeTitle = {
+    sec: 'SEC Filings',
+    insider: 'Insider Tracker',
+    ratings: 'Analyst Ratings',
+    analysis: 'Analysis',
+  }[activeApp]
+
   useEffect(() => {
     const feed = document.querySelector('.luna-chat-feed') as HTMLElement | null
     if (feed) {
       feed.scrollTop = feed.scrollHeight
     }
-  }, [researchTranscript.length])
+  }, [activeApp, researchTranscript.length])
 
   if (loading) {
     return <div className="center-state"><strong>Loading analyst...</strong><span>Fetching the latest evidence and thesis history.</span></div>
@@ -401,7 +322,32 @@ export function AnalystExperienceDisplay({
 
   return (
     <div className="luna-chat-shell">
-      <div className="luna-window">
+      <div className="luna-desktop-icons" aria-label="Fuentes de datos">
+        {desktopSources.map(({ id, label, Icon }) => (
+          <button
+            key={id}
+            type="button"
+            className={`luna-desktop-icon ${activeApp === id ? 'selected' : ''}`}
+            onClick={() => setActiveApp(id)}
+            aria-pressed={activeApp === id}
+          >
+            <span className="luna-desktop-icon-art"><Icon size={25} strokeWidth={1.7} /></span>
+            <span>{label}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="luna-desktop-windows">
+      <div className="luna-window luna-analysis-window">
+        <div className="luna-titlebar" aria-label="LUNA application window">
+          <div className="luna-window-controls" aria-hidden="true">
+            <span className="luna-window-control close" />
+            <span className="luna-window-control minimize" />
+            <span className="luna-window-control maximize" />
+          </div>
+          <span className="luna-titlebar-label">LUNA · {activeTitle}</span>
+          <span className="luna-titlebar-spacer" aria-hidden="true" />
+        </div>
         <header className="luna-window-header">
           <div className="luna-mini-ident" aria-label={`Luna analyst for ${activeTicker}`}>
             <span className="luna-mini-name">LUNA</span>
@@ -429,19 +375,21 @@ export function AnalystExperienceDisplay({
                 {!authBusy && <ArrowRight size={15} />}
               </button>
             )}
-            <div className={`luna-mini-status ${statusTone}`}>
-              <span className="live-dot" />
-              {statusLabel}
-            </div>
+            {statusLabel && (
+              <div className={`luna-mini-status ${statusTone}`} role="status">
+                <span className="live-dot" />
+                {statusLabel}
+              </div>
+            )}
           </div>
         </header>
 
         {authError && <div className="luna-auth-error">{authError}</div>}
 
-        <main className="luna-chat-feed" aria-live="polite">
-          {researchTranscript.length === 0 ? (
-            <div className="empty-research-state">No live research events are available yet.</div>
-          ) : researchTranscript.map((message) => (
+        {activeApp === 'sec' && <main className="luna-chat-feed" aria-live="polite">
+          {secTranscript.length === 0 ? (
+            <div className="empty-research-state">No analyzed SEC filings are available yet.</div>
+          ) : secTranscript.map((message) => (
             <article key={message.id} className={`luna-chat-message ${message.kind}`}>
               {message.source && (
                 <div className="luna-source-block">
@@ -481,15 +429,100 @@ export function AnalystExperienceDisplay({
               )}
             </article>
           ))}
-        </main>
+        </main>}
+
+        {activeApp === 'insider' && (
+          <main className="luna-data-view">
+            {insiderTranscript.length === 0 ? (
+              <div className="luna-placeholder-state">
+                <ChartColumnIncreasing size={26} />
+                <strong>No Form 4 analysis yet</strong>
+                <span>Processed insider filings will appear here as a table.</span>
+              </div>
+            ) : (
+              <div className="luna-table-scroll">
+                <table className="luna-insider-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Filing Type</th>
+                      <th>Impact/Action</th>
+                      <th>LUNA Assessment</th>
+                      <th>Confidence</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {insiderTranscript.map((message) => (
+                      <tr key={message.id}>
+                        <td>{formatFilingDate(message.stamp)}</td>
+                        <td><span className="luna-filing-badge">{message.filingType ?? 'Form 4'}</span></td>
+                        <td>{message.impact}{message.label ? ` · ${message.label}` : ''}</td>
+                        <td>
+                          <div className="luna-assessment-cell">
+                            <span>{message.primaryText ?? '—'}</span>
+                            {message.source && <small>{message.source}</small>}
+                          </div>
+                        </td>
+                        <td>{message.confidenceValue === undefined ? '—' : `${message.confidenceValue}%`}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </main>
+        )}
+
+        {(activeApp === 'ratings' || activeApp === 'analysis') && (
+          <main className="luna-data-view">
+            <div className="luna-placeholder-state">
+              {activeApp === 'ratings' ? <Star size={26} /> : <FolderOpen size={26} />}
+              <strong>{activeTitle}</strong>
+              <span>Awaiting external data connection...</span>
+            </div>
+          </main>
+        )}
 
         <footer className="luna-window-footer">
-          <div className="luna-window-status">
-            <span className="live-dot" />
-            {statusLabel}
+          <div className="luna-enqueue-feedback" aria-live="polite">
+            {enqueueError && <span className="luna-enqueue-error">{enqueueError}</span>}
+            {enqueueMessage && <span className="luna-enqueue-success">{enqueueMessage}</span>}
           </div>
+          {activeApp === 'sec' && session && evidenceList.some((item) => item.source_type?.toUpperCase() === 'SEC') && (
+            <button
+              type="button"
+              className="luna-enqueue-button"
+              onClick={() => void handleEnqueueAnalysis()}
+              disabled={enqueueBusy || statusLabel === 'PROCESSING'}
+            >
+              <RefreshCw size={15} className={enqueueBusy ? 'spinning' : undefined} />
+              {enqueueBusy ? 'Encolando…' : statusLabel === 'PROCESSING' ? 'Análisis en curso' : 'Actualizar análisis SEC'}
+            </button>
+          )}
         </footer>
       </div>
+
+      <aside className="luna-window luna-terminal-window" aria-label="LUNA Core Terminal">
+        <div className="luna-titlebar luna-terminal-titlebar">
+          <div className="luna-window-controls" aria-hidden="true">
+            <span className="luna-window-control close" />
+            <span className="luna-window-control minimize" />
+            <span className="luna-window-control maximize" />
+          </div>
+          <span className="luna-titlebar-label">LUNA Core Terminal</span>
+          <span className="luna-titlebar-spacer" aria-hidden="true" />
+        </div>
+        <div className="luna-terminal-content">
+          <div className="luna-terminal-preview-label">VISUAL PREVIEW · NOT LIVE TELEMETRY</div>
+          <p><span>&gt;</span> Initializing SEC monitor...</p>
+          <p><span>&gt;</span> Polling EDGAR database... <b>[OK]</b></p>
+          <p><span>&gt;</span> Parsing Insider Form 4...</p>
+          <p><span>&gt;</span> Awaiting new jobs...</p>
+          <div className="luna-terminal-cursor" aria-hidden="true" />
+        </div>
+      </aside>
+      </div>
+
     </div>
   )
 }
