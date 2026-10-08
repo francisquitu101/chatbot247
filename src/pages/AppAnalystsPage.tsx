@@ -1,4 +1,4 @@
-import { Plus, Sparkles } from 'lucide-react'
+import { ArrowRight, Sparkles } from 'lucide-react'
 
 export function AppAnalystsPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   return (
@@ -8,8 +8,8 @@ export function AppAnalystsPage({ onNavigate }: { onNavigate: (path: string) => 
           <p className="eyebrow">APP</p>
           <h1>Your analysts</h1>
         </div>
-        <button type="button" className="primary-button-inline inverse" onClick={() => onNavigate('/app/analysts/NVDA')}>
-          <Plus size={16} /> Create or open demo analyst
+        <button type="button" className="primary-button-inline inverse" onClick={() => onNavigate('/analyst/NVDA')}>
+          <ArrowRight size={16} /> Open NVDA analyst
         </button>
       </header>
 
@@ -20,12 +20,8 @@ export function AppAnalystsPage({ onNavigate }: { onNavigate: (path: string) => 
             <span className="status-pill"><span className="status-dot" /> LIVE</span>
           </div>
           <h2>NVIDIA</h2>
-          <p>Persistent AI analyst for the active public demo.</p>
-          <div className="mini-readout">
-            <span>Fair value</span>
-            <strong>$28.40</strong>
-          </div>
-          <button type="button" className="secondary-button wide" onClick={() => onNavigate('/app/analysts/NVDA')}>Open workspace</button>
+          <p>Persistent public AI analyst for NVIDIA.</p>
+          <button type="button" className="secondary-button wide" onClick={() => onNavigate('/analyst/NVDA')}>Open analyst</button>
         </article>
 
         <article className="section-card analyst-summary-card muted-card">

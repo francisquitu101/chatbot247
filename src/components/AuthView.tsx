@@ -37,7 +37,7 @@ export function AuthView() {
     setError(null)
 
     try {
-      const redirectUrl = getAuthRedirectUrl('/app')
+      const redirectUrl = getAuthRedirectUrl('/analyst/NVDA')
       const result = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: { redirectTo: redirectUrl },

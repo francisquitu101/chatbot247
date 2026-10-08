@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Chrome } from 'lucide-react'
+import type { Session } from '@supabase/supabase-js'
+import { ArrowRight, Chrome, LogOut } from 'lucide-react'
 import { getPrivateAnalystByTicker, getPublicAnalystByTicker } from '../lib/analystData'
 import { type NormalizedMarketSnapshot } from '../lib/marketData'
 import { getAuthRedirectUrl, supabase } from '../lib/supabase'
@@ -148,7 +149,17 @@ function readText(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null
 }
 
-export function AnalystExperienceDisplay({ ticker, privateView = false }: { ticker?: string; privateView?: boolean }) {
+export function AnalystExperienceDisplay({
+  ticker,
+  privateView = false,
+  session,
+  onSignOut,
+}: {
+  ticker?: string
+  privateView?: boolean
+  session?: Session | null
+  onSignOut?: () => void
+}) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [authError, setAuthError] = useState<string | null>(null)
@@ -166,7 +177,7 @@ export function AnalystExperienceDisplay({ ticker, privateView = false }: { tick
     setAuthError(null)
 
     try {
-      const redirectUrl = getAuthRedirectUrl('/app')
+      const redirectUrl = getAuthRedirectUrl('/analyst/NVDA')
       const result = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: { redirectTo: redirectUrl },
@@ -399,10 +410,25 @@ export function AnalystExperienceDisplay({ ticker, privateView = false }: { tick
           </div>
 
           <div className="luna-header-actions">
-            <button type="button" className="google-button" onClick={() => void handleGoogleSignIn()} disabled={authBusy}>
-              <Chrome size={16} />
-              {authBusy ? 'Connecting...' : 'Continue with Google'}
-            </button>
+            {session ? (
+              <div className="luna-session-controls">
+                <span className="luna-session-email" title={session.user.email ?? undefined}>{session.user.email}</span>
+                <button type="button" className="luna-signout-button" onClick={onSignOut} aria-label="Cerrar sesión" title="Cerrar sesión">
+                  <LogOut size={15} />
+                </button>
+              </div>
+            ) : privateView ? (
+              <button type="button" className="google-button" onClick={() => void handleGoogleSignIn()} disabled={authBusy}>
+                <Chrome size={16} />
+                {authBusy ? 'Connecting...' : 'Continue with Google'}
+              </button>
+            ) : (
+              <button type="button" className="luna-login-button" onClick={() => void handleGoogleSignIn()} disabled={authBusy}>
+                <Chrome size={15} />
+                {authBusy ? 'Conectando...' : 'Iniciar sesión con Google'}
+                {!authBusy && <ArrowRight size={15} />}
+              </button>
+            )}
             <div className={`luna-mini-status ${statusTone}`}>
               <span className="live-dot" />
               {statusLabel}
@@ -468,6 +494,14 @@ export function AnalystExperienceDisplay({ ticker, privateView = false }: { tick
   )
 }
 
-export function PublicAnalystPage({ ticker }: { ticker?: string }) {
-  return <AnalystExperienceDisplay ticker={ticker} />
+export function PublicAnalystPage({
+  ticker,
+  session,
+  onSignOut,
+}: {
+  ticker?: string
+  session?: Session | null
+  onSignOut?: () => void
+}) {
+  return <AnalystExperienceDisplay ticker={ticker} session={session} onSignOut={onSignOut} />
 }

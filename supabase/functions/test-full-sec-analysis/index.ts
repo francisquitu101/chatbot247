@@ -74,6 +74,7 @@ Deno.serve(async (request) => {
     const body = await readJson(request)
     const evidenceId = body?.evidenceId ?? TEST_EVIDENCE_ID
     if (!isUuid(evidenceId)) return errorResponse('INVALID_EVIDENCE_REQUEST', 'evidenceId must be a valid UUID', 400, request)
+    if (evidenceId !== TEST_EVIDENCE_ID) return errorResponse('EVIDENCE_NOT_ALLOWED', 'Only the specified NVDA SEC evidence is allowed for this read-only harness.', 400, request)
 
     const client = createBackendClient()
     const { data: evidence, error: evidenceError } = await client
@@ -106,11 +107,18 @@ Deno.serve(async (request) => {
       ? evidence.raw_metadata as Record<string, unknown>
       : {}
 
+    const cik = metadata.cik ?? metadata.cik_number
+    const accessionNumber = metadata.accessionNumber ?? metadata.accession_number
+    const primaryDocument = metadata.primaryDocument ?? metadata.primary_document
+    if (typeof cik !== 'string' || typeof accessionNumber !== 'string' || typeof primaryDocument !== 'string') {
+      return errorResponse('SEC_METADATA_INCOMPLETE', 'The selected evidence does not contain real SEC filing metadata.', 422, request)
+    }
+
     const retrievalStartedAt = Date.now()
     const retrieval = await retrieveSecDocument({
-      cik: metadata.cik ?? metadata.cik_number ?? '0001045810',
-      accessionNumber: metadata.accessionNumber ?? metadata.accession_number ?? '0001045810-26-000075',
-      primaryDocument: metadata.primaryDocument ?? metadata.primary_document ?? 'nvda-20260726.htm',
+      cik,
+      accessionNumber,
+      primaryDocument,
     }, {
       timeoutMs: 8000,
       maxBytes: 25 * 1024 * 1024,
@@ -128,11 +136,10 @@ Deno.serve(async (request) => {
     }
 
     const selectedChunks = totalChunksAvailable.slice(0, 2)
-    const openaiCalls: Array<Record<string, unknown>> = []
+    const openaiCalls: Array<{ provider: string; model: string; responseId: string | null; latencyMs: number; success: boolean }> = []
     const analyzed: Array<Record<string, unknown>> = []
 
-    for (const chunk of selectedChunks) {
-      const startedAt = Date.now()
+    for (const [chunkIndex, chunk] of selectedChunks.entries()) {
       const provider = new OpenAIResearchProvider()
       const context = chunkContextForAnalysis({
         analyst: {
@@ -150,24 +157,24 @@ Deno.serve(async (request) => {
           summary: evidence.summary,
           raw_metadata: metadata,
         },
-        chunk: { ...chunk, characterCount: chunk.characterCount },
+        chunk: { ...chunk, chunkIndex, characterCount: chunk.characterCount },
       })
 
       const result = await provider.analyzeEvidence(context)
-      const latencyMs = Date.now() - startedAt
       const valid = isAnalystAnalysisResult(result)
+      const runMetadata = provider.lastRunMetadata
+      if (!runMetadata || runMetadata.provider !== 'openai') throw new Error('OPENAI_RUN_METADATA_MISSING')
 
       openaiCalls.push({
-        chunkIndex: chunk.chunkIndex,
-        provider: provider.lastRunMetadata?.provider ?? 'openai',
-        model: provider.lastRunMetadata?.model ?? 'unknown',
-        responseId: provider.lastRunMetadata?.responseId ?? 'unavailable',
-        latencyMs,
+        provider: runMetadata.provider,
+        model: runMetadata.model,
+        responseId: runMetadata.responseId,
+        latencyMs: runMetadata.latencyMs,
         success: valid,
       })
 
       analyzed.push({
-        chunkIndex: chunk.chunkIndex,
+        chunkIndex,
         section: chunk.section,
         characterCount: chunk.characterCount,
         result: valid ? result : null,
@@ -175,14 +182,12 @@ Deno.serve(async (request) => {
       })
 
       if (!valid) {
-        return errorResponse('CHUNK_ANALYSIS_FAILED', `Chunk ${chunk.chunkIndex} did not return a valid AnalystAnalysisResult.`, 502, request)
+        return errorResponse('CHUNK_ANALYSIS_FAILED', `Chunk ${chunkIndex} did not return a valid AnalystAnalysisResult.`, 502, request)
       }
     }
 
     const summaryPrompt = `Synthesize the following two real chunk-level research outputs into a single final equity research assessment. Return only a valid AnalystAnalysisResult JSON object.\n\nChunk 0: ${asSummary(analyzed[0].result)}\n\nChunk 1: ${asSummary(analyzed[1].result)}\n\nCurrent analyst state: ticker=${analyst.ticker}, company=${analyst.company_name ?? 'unknown'}, thesis=${state?.current_thesis ?? analyst.current_thesis ?? ''}, currentFairValue=${state?.current_fair_value ?? analyst.current_fair_value ?? null}, previousFairValue=${state?.previous_fair_value ?? analyst.previous_fair_value ?? null}, confidence=${state?.confidence ?? analyst.confidence ?? 0}.`
-
     const synthesisProvider = new OpenAIResearchProvider()
-    const synthesisStartedAt = Date.now()
     const synthesisContext = chunkContextForAnalysis({
       analyst: {
         ticker: analyst.ticker,
@@ -208,56 +213,46 @@ Deno.serve(async (request) => {
       },
     })
     const synthesisResult = await synthesisProvider.analyzeEvidence(synthesisContext)
-    const synthesisLatencyMs = Date.now() - synthesisStartedAt
     const synthesisValid = isAnalystAnalysisResult(synthesisResult)
+    const synthesisMetadata = synthesisProvider.lastRunMetadata
+    if (!synthesisMetadata || synthesisMetadata.provider !== 'openai') throw new Error('OPENAI_RUN_METADATA_MISSING')
 
     if (!synthesisValid) {
       return errorResponse('SYNTHESIS_FAILED', 'The synthesis OpenAI call did not return a valid AnalystAnalysisResult.', 502, request)
     }
 
+    const synthesisCall = {
+      provider: synthesisMetadata.provider,
+      model: synthesisMetadata.model,
+      responseId: synthesisMetadata.responseId,
+      latencyMs: synthesisMetadata.latencyMs,
+      success: synthesisValid,
+    }
     const totalMs = Date.now() - retrievalStartedAt
     const response = {
       ok: true,
-      test: 'REAL_OPENAI_2_CHUNKS',
+      realOpenAITest: 'SUCCESS',
       retrieval: {
         rawDocumentBytes: retrieval.documentBytes,
-        normalizedDocumentBytes: normalizedDocumentBytes,
+        normalizedDocumentBytes,
         normalizedCharacterCount: retrieval.normalizedText.length,
         retrievalMs,
       },
-      chunks: selectedChunks.map((chunk) => ({
-        chunkIndex: chunk.chunkIndex,
+      totalChunksAvailable: totalChunksAvailable.length,
+      chunksSentToOpenAI: selectedChunks.length,
+      chunks: selectedChunks.map((chunk, chunkIndex) => ({
+        chunkIndex,
         section: chunk.section,
-        characterCount: chunk.characterCount,
-        provider: openaiCalls.find((call) => Number(call.chunkIndex) === chunk.chunkIndex)?.provider ?? 'openai',
-        model: openaiCalls.find((call) => Number(call.chunkIndex) === chunk.chunkIndex)?.model ?? 'unknown',
-        responseId: openaiCalls.find((call) => Number(call.chunkIndex) === chunk.chunkIndex)?.responseId ?? 'unavailable',
-        latencyMs: openaiCalls.find((call) => Number(call.chunkIndex) === chunk.chunkIndex)?.latencyMs ?? 0,
-        success: Boolean(openaiCalls.find((call) => Number(call.chunkIndex) === chunk.chunkIndex)?.success),
+        characters: chunk.characterCount,
+        ...openaiCalls[chunkIndex],
       })),
-      openaiCalls: [
-        ...openaiCalls,
-        {
-          chunkIndex: 'synthesis',
-          provider: synthesisProvider.lastRunMetadata?.provider ?? 'openai',
-          model: synthesisProvider.lastRunMetadata?.model ?? 'unknown',
-          responseId: synthesisProvider.lastRunMetadata?.responseId ?? 'unavailable',
-          latencyMs: synthesisLatencyMs,
-          success: true,
-        },
-      ],
-      synthesis: {
-        provider: synthesisProvider.lastRunMetadata?.provider ?? 'openai',
-        model: synthesisProvider.lastRunMetadata?.model ?? 'unknown',
-        responseId: synthesisProvider.lastRunMetadata?.responseId ?? 'unavailable',
-        latencyMs: synthesisLatencyMs,
-        success: true,
-      },
+      synthesis: synthesisCall,
       metrics: {
-        realOpenAICalls: 3,
+        realOpenAICalls: openaiCalls.length + 1,
         failedCalls: 0,
         totalMs,
       },
+      supabaseWrites: 0,
       finalResult: {
         materiality: synthesisResult.materiality,
         thesisChanged: synthesisResult.thesisChanged,
@@ -266,6 +261,7 @@ Deno.serve(async (request) => {
         impact: synthesisResult.impact,
         decisionSummary: synthesisResult.decisionSummary,
       },
+      isAnalystAnalysisResult: synthesisValid,
     }
 
     return ok(response, request)
