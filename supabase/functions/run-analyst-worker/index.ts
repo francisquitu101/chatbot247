@@ -1,7 +1,7 @@
 import { createBackendClient } from '../_shared/supabase.ts'
 import { errorResponse, handleOptions, ok } from '../_shared/response.ts'
 
-const MAX_JOBS_PER_INVOCATION = 10
+const MAX_JOBS_PER_INVOCATION = 1
 const WORKER_KEY_ENV = 'ANALYST_WORKER_KEY'
 
 Deno.serve(async (request) => {
@@ -13,7 +13,7 @@ Deno.serve(async (request) => {
 
   const client = createBackendClient()
   const startedAt = Date.now()
-  const stats = { jobs_discovered: 0, jobs_claimed: 0, jobs_analyzed: 0, jobs_completed: 0, jobs_blocked: 0, jobs_failed: 0, enrichments_created: 0, enrichments_reused: 0, openai_calls: 0, latency_ms: 0 }
+  const stats = { jobs_discovered: 0, jobs_claimed: 0, jobs_analyzed: 0, jobs_completed: 0, jobs_blocked: 0, jobs_failed: 0, openai_calls: 0, latency_ms: 0 }
   const results: Array<Record<string, unknown>> = []
   try {
     const { data: queued, error: queueError } = await client
@@ -30,7 +30,6 @@ Deno.serve(async (request) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')
     if (!supabaseUrl) throw new Error('BACKEND_CONFIG_MISSING')
     for (const job of queued ?? []) {
-      const { data: existingEnrichment } = await client.from('evidence_enrichment').select('id').eq('evidence_id', job.evidence_id).eq('extraction_version', 'sec-v1.1').eq('content_status', 'completed').maybeSingle()
       const response = await fetch(`${supabaseUrl}/functions/v1/process-analyst-job`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${workerKey}`, apikey: workerKey, 'x-analyst-worker-key': workerKey, 'Content-Type': 'application/json' },
@@ -41,17 +40,28 @@ Deno.serve(async (request) => {
       const errorCode = errorPayload && typeof errorPayload === 'object' && 'code' in errorPayload ? String((errorPayload as Record<string, unknown>).code) : ''
       if (errorCode !== 'JOB_NOT_AVAILABLE') stats.jobs_claimed += 1
       if (response.ok) {
-        stats.jobs_analyzed += 1
-        stats.jobs_completed += 1
-        stats.openai_calls += 1
         const data = payload && typeof payload === 'object' && 'data' in payload ? payload.data as Record<string, unknown> : {}
         const result = data.result && typeof data.result === 'object' ? data.result as Record<string, unknown> : {}
-        stats.enrichments_reused += existingEnrichment ? 1 : 0
-        if (!existingEnrichment) {
-          const { data: createdEnrichment } = await client.from('evidence_enrichment').select('id').eq('evidence_id', job.evidence_id).eq('extraction_version', 'sec-v1.1').eq('content_status', 'completed').maybeSingle()
-          stats.enrichments_created += createdEnrichment ? 1 : 0
-        }
-        results.push({ job_id: job.id, evidence_id: job.evidence_id, outcome: 'ANALYZED', run_id: data.run_id ?? null, materiality: result.materiality, thesisChanged: result.thesisChanged, valuationChanged: result.valuationChanged })
+        const outcome = data.outcome === 'CONTINUED' ? 'CONTINUED' : 'ANALYZED'
+        stats.jobs_analyzed += 1
+        stats.jobs_completed += outcome === 'ANALYZED' ? 1 : 0
+        stats.openai_calls += typeof data.openai_calls === 'number'
+          ? data.openai_calls
+          : outcome === 'CONTINUED' && typeof data.processed_this_invocation === 'number'
+            ? data.processed_this_invocation
+            : 1
+        results.push({
+          job_id: job.id,
+          evidence_id: job.evidence_id,
+          outcome,
+          run_id: data.run_id ?? null,
+          processed_this_invocation: data.processed_this_invocation ?? null,
+          processed_chunks: data.processed_chunks ?? null,
+          total_chunks: data.total_chunks ?? null,
+          materiality: result.materiality,
+          thesisChanged: result.thesisChanged,
+          valuationChanged: result.valuationChanged,
+        })
       } else if (response.status === 409 && payload && typeof payload === 'object' && 'error' in payload && String((payload as Record<string, unknown>).error).includes('QUALITY')) {
         if (errorCode === 'QUALITY_GATE_BLOCKED') {
           stats.jobs_blocked += 1

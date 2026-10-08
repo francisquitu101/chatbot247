@@ -376,6 +376,12 @@ verify_jwt = false
 [functions.send-notification-email]
 verify_jwt = false
 
+[functions.process-analyst-job]
+verify_jwt = false
+
+[functions.run-analyst-worker]
+verify_jwt = false
+
 [edge_runtime]
 enabled = true
 # Supported request policies: `oneshot`, `per_worker`.
