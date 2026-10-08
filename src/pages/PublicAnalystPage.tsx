@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { ArrowLeft, ArrowRight, ChartColumnIncreasing, Chrome, ExternalLink, FileText, FolderOpen, LogOut, Newspaper, RefreshCw, Star } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Brain, ChartColumnIncreasing, Chrome, ExternalLink, FileText, FolderOpen, LogOut, Newspaper, RefreshCw, Star } from 'lucide-react'
 import { getPrivateAnalystByTicker, getPublicAnalystByTicker } from '../lib/analystData'
 import { getFinvizCompanyActivity, getFinvizCompanyNews, getLatestTerminalActivity, type TerminalActivityEvent } from '../lib/queries/company'
 import { getAuthRedirectUrl, supabase } from '../lib/supabase'
@@ -43,6 +43,18 @@ function formatFinvizTimestamp(value: string | null | undefined) {
     timeZone: 'America/New_York',
     timeZoneName: 'short',
   }).format(date).replace(',', ' ·')
+}
+
+function formatTerminalTimestamp(value: string | null | undefined) {
+  if (!value) return '—'
+  const dateOnly = value.match(/^(\d{4}-\d{2}-\d{2})$/)
+  const date = new Date(dateOnly ? `${dateOnly[1]}T00:00:00Z` : value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    timeZone: dateOnly ? 'UTC' : 'America/New_York',
+  }).format(date)
 }
 
 function formatFilingDate(value: string | null | undefined) {
@@ -115,6 +127,11 @@ function getErrorMessage(error: unknown, fallback: string): string {
 
 type AnalystApp = 'sec' | 'insider' | 'ratings' | 'news' | 'analysis'
 
+type NewsBriefing =
+  | { status: 'loading' }
+  | { status: 'success'; summary: string }
+  | { status: 'error' }
+
 function getExternalHttpUrl(value: string): string | null {
   try {
     const url = new URL(value)
@@ -154,6 +171,8 @@ export function AnalystExperienceDisplay({
   const [enqueueError, setEnqueueError] = useState<string | null>(null)
   const [activeApp, setActiveApp] = useState<AnalystApp>('sec')
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null)
+  const [briefingArticleId, setBriefingArticleId] = useState<string | null>(null)
+  const [newsBriefings, setNewsBriefings] = useState<Record<string, NewsBriefing>>({})
   const [data, setData] = useState<Awaited<ReturnType<typeof getPublicAnalystByTicker>> | null>(null)
   const [finvizActivity, setFinvizActivity] = useState<Awaited<ReturnType<typeof getFinvizCompanyActivity>>>({ ratings: [], insiderTrades: [] })
   const [finvizNews, setFinvizNews] = useState<Awaited<ReturnType<typeof getFinvizCompanyNews>>>([])
@@ -161,6 +180,32 @@ export function AnalystExperienceDisplay({
   const [terminalActivityErrors, setTerminalActivityErrors] = useState<string[]>([])
 
   const activeTicker = useMemo(() => (ticker ?? 'NVDA').toUpperCase(), [ticker])
+
+  async function handleSummarizeNews(articleId: string, articleUrl: string | null) {
+    setBriefingArticleId(articleId)
+    const existingBriefing = newsBriefings[articleId]
+    if (existingBriefing?.status === 'loading' || existingBriefing?.status === 'success') return
+    if (!supabase || !articleUrl) {
+      setNewsBriefings((current) => ({ ...current, [articleId]: { status: 'error' } }))
+      return
+    }
+
+    setNewsBriefings((current) => ({ ...current, [articleId]: { status: 'loading' } }))
+    try {
+      const { data: result, error: invocationError } = await supabase.functions.invoke<{
+        success: boolean
+        data?: { summary?: string }
+      }>('summarize-news', { body: { url: articleUrl } })
+      if (invocationError) throw invocationError
+      const summary = result?.success === true && typeof result.data?.summary === 'string'
+        ? result.data.summary.trim()
+        : ''
+      if (!summary) throw new Error('Summarization returned no summary.')
+      setNewsBriefings((current) => ({ ...current, [articleId]: { status: 'success', summary } }))
+    } catch {
+      setNewsBriefings((current) => ({ ...current, [articleId]: { status: 'error' } }))
+    }
+  }
 
   async function handleGoogleSignIn() {
     if (!supabase) return
@@ -655,6 +700,7 @@ export function AnalystExperienceDisplay({
                   const publisher = readText(item.metadata.provider) ?? readText(item.author) ?? 'Finviz'
                   const articleUrl = getExternalHttpUrl(item.url)
                   const headline = cleanupDisplayText(item.title)
+                  const briefing = newsBriefings[item.id]
                   return (
                     <article className="luna-news-item" key={item.id}>
                       <div className="luna-news-item-meta">
@@ -662,6 +708,41 @@ export function AnalystExperienceDisplay({
                         <time dateTime={item.published_at ?? undefined}>{formatFinvizTimestamp(item.published_at)}</time>
                       </div>
                       <h3>{headline}</h3>
+                      <button
+                        type="button"
+                        className="luna-news-brief-button"
+                        aria-expanded={briefingArticleId === item.id}
+                        aria-controls={`news-brief-${item.id}`}
+                        disabled={briefing?.status === 'loading'}
+                        onClick={() => {
+                          if (briefingArticleId === item.id && briefing?.status === 'success') {
+                            setBriefingArticleId(null)
+                            return
+                          }
+                          void handleSummarizeNews(item.id, articleUrl)
+                        }}
+                      >
+                        <Brain size={13} aria-hidden="true" />
+                        {briefing?.status === 'loading'
+                          ? 'Summarizing...'
+                          : briefingArticleId === item.id && briefing?.status === 'success'
+                            ? 'Hide brief'
+                            : briefing?.status === 'error'
+                              ? 'Retry summary'
+                              : 'Summarize'}
+                      </button>
+                      <p
+                        className="luna-news-brief"
+                        id={`news-brief-${item.id}`}
+                        role="status"
+                        hidden={briefingArticleId !== item.id}
+                      >
+                        {briefing?.status === 'success'
+                          ? briefing.summary
+                          : briefing?.status === 'error'
+                            ? '[Error: Unable to extract article content]'
+                            : '[MarketMole Agent is extracting and summarizing...]'}
+                      </p>
                       {articleUrl && (
                         <a href={articleUrl} target="_blank" rel="noreferrer">
                           Read original article <ExternalLink size={13} aria-hidden="true" />
@@ -797,7 +878,7 @@ export function AnalystExperienceDisplay({
           <div className="luna-terminal-preview-label">LIVE ACTIVITY · AMERICA/NEW_YORK</div>
           {terminalActivity.map((event) => (
             <p key={event.id}>
-              <span>&gt;</span> [{formatFinvizTimestamp(event.timestamp)}] {event.message}
+              <span>&gt;</span> [{formatTerminalTimestamp(event.timestamp)}] {event.message}
             </p>
           ))}
           {terminalActivity.length === 0 && terminalActivityErrors.length === 0 && (

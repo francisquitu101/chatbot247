@@ -126,8 +126,9 @@ async function getAnalystByTicker(client: SupabaseClient, ticker: string, visibi
     client.from('analyst_evidence')
       .select('id, evidence_items!inner(id, ticker, source_type, source_url, title, published_at, summary, raw_metadata)')
       .eq('analyst_id', analyst.id)
+      .order('published_at', { referencedTable: 'evidence_items', ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
-      .limit(20),
+      .limit(100),
     client.from('analyst_jobs').select('id, analyst_id, evidence_id, status, attempts, created_at, updated_at').eq('analyst_id', analyst.id).order('updated_at', { ascending: false }).limit(10),
     client.from('analyst_runs').select('id, analyst_id, evidence_id, job_id, status, provider, model, started_at, completed_at, created_at, result_json').eq('analyst_id', analyst.id).order('created_at', { ascending: false }).limit(10),
   ])
@@ -142,6 +143,12 @@ async function getAnalystByTicker(client: SupabaseClient, ticker: string, visibi
     const item = entry.evidence_items
     if (!item) return []
     return Array.isArray(item) ? item.filter((candidate): candidate is EvidenceRecord => Boolean(candidate)) : [item]
+  }).sort((left, right) => {
+    const leftTimestamp = left.published_at ? Date.parse(left.published_at) : Number.NaN
+    const rightTimestamp = right.published_at ? Date.parse(right.published_at) : Number.NaN
+    if (!Number.isFinite(leftTimestamp)) return Number.isFinite(rightTimestamp) ? 1 : 0
+    if (!Number.isFinite(rightTimestamp)) return -1
+    return rightTimestamp - leftTimestamp
   })
 
   return {

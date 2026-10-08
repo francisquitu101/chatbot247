@@ -105,7 +105,7 @@ export async function getLatestTerminalActivity(
   ticker: string,
   analystId: string,
 ): Promise<TerminalActivityResult> {
-  const [insiderResult, newsResult, runResult] = await Promise.allSettled([
+  const [insiderResult, newsResult, runResult, filingResult] = await Promise.allSettled([
     client.from('finviz_insider_trades')
       .select('id, insider_name, transaction, transaction_date, scraped_at')
       .eq('ticker', ticker.toUpperCase())
@@ -120,6 +120,14 @@ export async function getLatestTerminalActivity(
       .order('completed_at', { ascending: false, nullsFirst: false })
       .limit(1)
       .maybeSingle(),
+    client.from('analyst_evidence')
+      .select('evidence_items!inner(id, title, published_at, source_type)')
+      .eq('analyst_id', analystId)
+      .eq('evidence_items.source_type', 'SEC')
+      .order('published_at', { referencedTable: 'evidence_items', ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
   ])
 
   const events: TerminalActivityEvent[] = []
@@ -130,7 +138,7 @@ export async function getLatestTerminalActivity(
     if (trade) {
       events.push({
         id: `insider-${trade.id}`,
-        timestamp: trade.scraped_at,
+        timestamp: trade.transaction_date || trade.scraped_at,
         message: `🚨 Insider action: ${trade.transaction || 'Trade'} by ${trade.insider_name || 'unknown insider'}`,
       })
     }
@@ -144,18 +152,37 @@ export async function getLatestTerminalActivity(
   if (newsResult.status === 'fulfilled') {
     const latestNews = newsResult.value.reduce<FinvizNewsItem | null>((latest, item) => {
       if (!latest) return item
-      return new Date(item.scraped_at).getTime() > new Date(latest.scraped_at).getTime() ? item : latest
+      const itemTimestamp = new Date(item.published_at ?? item.scraped_at).getTime()
+      const latestTimestamp = new Date(latest.published_at ?? latest.scraped_at).getTime()
+      return itemTimestamp > latestTimestamp ? item : latest
     }, null)
     if (latestNews) {
       const headline = latestNews.title?.trim()
       events.push({
         id: `news-${latestNews.id}`,
-        timestamp: latestNews.scraped_at,
-        message: `📰 Ingested new market article${headline ? `: ${headline}` : ''}`,
+        timestamp: latestNews.published_at ?? latestNews.scraped_at,
+        message: `📰 Market article${headline ? `: ${headline}` : ''}`,
       })
     }
   } else {
     errors.push(`Market news: ${getQueryErrorMessage(newsResult.reason)}`)
+  }
+
+  if (filingResult.status === 'fulfilled' && !filingResult.value.error) {
+    const relation = filingResult.value.data?.evidence_items
+    const filing = Array.isArray(relation) ? relation[0] : relation
+    if (filing?.published_at) {
+      events.push({
+        id: `filing-${filing.id}`,
+        timestamp: filing.published_at,
+        message: `📄 SEC filing published${filing.title ? `: ${filing.title}` : ''}`,
+      })
+    }
+  } else {
+    const message = filingResult.status === 'rejected'
+      ? getQueryErrorMessage(filingResult.reason)
+      : getQueryErrorMessage(filingResult.value.error)
+    errors.push(`SEC filings: ${message}`)
   }
 
   if (runResult.status === 'fulfilled' && !runResult.value.error) {

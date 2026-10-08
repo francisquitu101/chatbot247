@@ -7,7 +7,7 @@ const SEC_ARCHIVES_URL = 'https://www.sec.gov/Archives/edgar/data'
 const SEC_USER_AGENT_ENV = 'SEC_USER_AGENT'
 const REQUEST_TIMEOUT_MS = 15_000
 const RELEVANT_FORMS = new Set([
-  '8-K', '10-K', '10-Q', '20-F', '6-K', '3', '4', '5',
+  '8-K', '10-K', '10-Q', '20-F', '6-K', '3', '4', '5', '144',
   'SC 13D', 'SC 13G', 'SCHEDULE 13D', 'SCHEDULE 13G', 'S-1', 'S-3', 'S-4', 'S-8',
 ])
 
