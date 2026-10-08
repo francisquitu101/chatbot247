@@ -1,7 +1,7 @@
-﻿@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
-  font-family: 'DM Sans', sans-serif;
+  font-family: 'Inter', 'SF Pro Display', system-ui, sans-serif;
   color: #132127;
   background: #f5f7f6;
   font-synthesis: none;
@@ -10,6 +10,8 @@
   --muted: #5f6d67;
   --line: #e1e7e4;
   --green: #16734a;
+  --brand-dark: #1e232a;
+  --brand-peach: #fdba74;
   --panel: #ffffff;
   --shadow: 0 20px 60px rgba(18, 35, 31, 0.08);
 }
@@ -40,7 +42,7 @@ a { text-decoration: none; color: inherit; }
 
 .eyebrow {
   margin: 0 0 12px;
-  font-family: 'Space Grotesk', sans-serif;
+  font-family: 'Inter', 'SF Pro Display', system-ui, sans-serif;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.14em;
@@ -52,7 +54,7 @@ a { text-decoration: none; color: inherit; }
 .auth-panel h1,
 .landing-page h1,
 .analyst-page h1 {
-  font-family: 'Space Grotesk', sans-serif;
+  font-family: 'Inter', 'SF Pro Display', system-ui, sans-serif;
   letter-spacing: -0.05em;
 }
 
@@ -76,9 +78,21 @@ a { text-decoration: none; color: inherit; }
   padding: 30px 26px;
   overflow: hidden;
   background:
-    radial-gradient(ellipse at 18% 12%, rgba(111, 147, 159, 0.44), transparent 38%),
-    radial-gradient(ellipse at 82% 86%, rgba(77, 110, 111, 0.34), transparent 42%),
-    linear-gradient(135deg, #263a46 0%, #344c56 48%, #1b303b 100%);
+    radial-gradient(ellipse at 18% 12%, rgba(148, 163, 184, 0.2), transparent 38%),
+    radial-gradient(ellipse at 82% 86%, rgba(253, 186, 116, 0.12), transparent 42%),
+    linear-gradient(135deg, #303740 0%, #1e232a 52%, #15191f 100%);
+}
+
+.marketmole-desktop-mascot {
+  position: absolute;
+  z-index: 2;
+  right: -90px;
+  bottom: -28px;
+  width: clamp(400px, 40vw, 540px);
+  height: auto;
+  opacity: 0.92;
+  filter: drop-shadow(0 14px 16px rgba(0, 0, 0, 0.16));
+  pointer-events: none;
 }
 
 .luna-desktop-icons {
@@ -135,6 +149,8 @@ a { text-decoration: none; color: inherit; }
 }
 
 .luna-desktop-windows {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -167,17 +183,19 @@ a { text-decoration: none; color: inherit; }
   width: min(360px, 36%);
   flex: 0 1 360px;
   align-self: center;
-  background: #080d0b;
+  background: var(--brand-dark);
   border-color: rgba(173, 208, 188, 0.18);
   box-shadow: 0 32px 90px rgba(0, 0, 0, 0.34), 0 4px 14px rgba(0, 0, 0, 0.2);
 }
 
-.luna-terminal-titlebar {
+.luna-titlebar.luna-terminal-titlebar {
   border-bottom-color: rgba(255, 255, 255, 0.08);
-  background: linear-gradient(180deg, #202522, #171c19);
+  background: linear-gradient(180deg, #343a43, #252a31);
 }
 
-.luna-terminal-titlebar .luna-titlebar-label { color: #c0ccc4; }
+.luna-terminal-titlebar .luna-titlebar-label { color: var(--brand-peach); }
+.luna-brand-title { display: inline-flex; align-items: center; gap: 7px; }
+.luna-brand-title img { width: 20px; height: 20px; border-radius: 6px; }
 
 .luna-terminal-content {
   flex: 1;
@@ -185,8 +203,8 @@ a { text-decoration: none; color: inherit; }
   overflow: auto;
   background:
     radial-gradient(ellipse at 100% 0%, rgba(32, 82, 55, 0.18), transparent 48%),
-    #080d0b;
-  color: #8edca7;
+    var(--brand-dark);
+  color: #d4d8de;
   font-family: 'Consolas', 'SFMono-Regular', monospace;
   font-size: 12px;
   line-height: 1.8;
@@ -200,14 +218,14 @@ a { text-decoration: none; color: inherit; }
 }
 
 .luna-terminal-content p { margin: 0 0 10px; }
-.luna-terminal-content p > span { color: #4bbf78; }
-.luna-terminal-content b { color: #a4f2bb; font-weight: 600; }
+.luna-terminal-content p > span { color: var(--brand-peach); }
+.luna-terminal-content b { color: var(--brand-peach); font-weight: 700; }
 
 .luna-terminal-cursor {
   width: 7px;
   height: 14px;
   margin-top: 18px;
-  background: #69cf8d;
+  background: var(--brand-peach);
   animation: luna-terminal-blink 1s steps(2, start) infinite;
 }
 
@@ -297,10 +315,10 @@ a { text-decoration: none; color: inherit; }
   gap: 9px;
   min-height: 36px;
   padding: 0 15px;
-  border: 1px solid rgba(22, 115, 74, 0.12);
+  border: 1px solid rgba(253, 186, 116, 0.5);
   border-radius: 999px;
-  background: linear-gradient(135deg, #16734a, #105d3b);
-  box-shadow: 0 5px 14px rgba(22, 115, 74, 0.16);
+  background: linear-gradient(135deg, #303740, #1e232a);
+  box-shadow: 0 5px 14px rgba(30, 35, 42, 0.2);
   color: #fff;
   font-size: 12px;
   font-weight: 700;
@@ -309,7 +327,7 @@ a { text-decoration: none; color: inherit; }
 
 .luna-login-button:hover {
   transform: translateY(-1px);
-  box-shadow: 0 7px 18px rgba(22, 115, 74, 0.22);
+  box-shadow: 0 7px 18px rgba(30, 35, 42, 0.28);
 }
 
 .luna-session-email {
@@ -347,6 +365,12 @@ a { text-decoration: none; color: inherit; }
   text-transform: uppercase;
 }
 
+.marketmole-header-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+}
+
 .luna-mini-name,
 .luna-mini-ticker {
   font-weight: 700;
@@ -371,7 +395,7 @@ a { text-decoration: none; color: inherit; }
 .luna-mini-status.idle,
 .luna-window-status.idle { color: var(--muted); }
 .luna-mini-status.active,
-.luna-window-status.active { color: var(--ink); background: rgba(22, 115, 74, 0.06); }
+.luna-window-status.active { color: var(--brand-dark); background: rgba(253, 186, 116, 0.2); }
 .luna-mini-status.error,
 .luna-window-status.error { color: #8a2d2d; background: rgba(138, 45, 45, 0.05); }
 
@@ -395,7 +419,7 @@ a { text-decoration: none; color: inherit; }
 }
 
 .luna-enqueue-error { color: #9b3030; }
-.luna-enqueue-success { color: #176b46; }
+.luna-enqueue-success { color: #9a5a21; }
 
 .luna-enqueue-button {
   display: inline-flex;
@@ -404,10 +428,10 @@ a { text-decoration: none; color: inherit; }
   gap: 8px;
   min-height: 38px;
   padding: 0 15px;
-  border: 1px solid rgba(22, 115, 74, 0.16);
+  border: 1px solid rgba(253, 186, 116, 0.5);
   border-radius: 11px;
-  background: linear-gradient(135deg, #16734a, #105d3b);
-  box-shadow: 0 5px 14px rgba(22, 115, 74, 0.15);
+  background: linear-gradient(135deg, #303740, #1e232a);
+  box-shadow: 0 5px 14px rgba(30, 35, 42, 0.2);
   color: #fff;
   font-size: 12px;
   font-weight: 700;
@@ -417,7 +441,7 @@ a { text-decoration: none; color: inherit; }
 
 .luna-enqueue-button:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 8px 20px rgba(22, 115, 74, 0.22);
+  box-shadow: 0 8px 20px rgba(30, 35, 42, 0.28);
 }
 
 .luna-enqueue-button:disabled { opacity: 0.72; }
@@ -444,8 +468,8 @@ a { text-decoration: none; color: inherit; }
   height: 8px;
   display: inline-block;
   border-radius: 50%;
-  background: #1ab66d;
-  box-shadow: 0 0 0 5px rgba(26, 182, 109, 0.13);
+  background: var(--brand-peach);
+  box-shadow: 0 0 0 5px rgba(253, 186, 116, 0.2);
 }
 
 .signal-dot.subtle { background: #9aa7a1; box-shadow: none; }
@@ -473,7 +497,7 @@ a { text-decoration: none; color: inherit; }
 
 .luna-company-header h1 {
   margin: 10px 0 0;
-  font-family: 'Space Grotesk', sans-serif;
+  font-family: 'Inter', 'SF Pro Display', system-ui, sans-serif;
   font-size: clamp(42px, 5vw, 62px);
   letter-spacing: -0.07em;
   line-height: 0.96;
@@ -1057,10 +1081,10 @@ a { text-decoration: none; color: inherit; }
   place-items: center;
   width: 58px;
   height: 64px;
-  border: 1px solid #dce8e0;
+  border: 1px solid rgba(253, 186, 116, 0.45);
   border-radius: 9px;
-  background: linear-gradient(145deg, #f4faf6, #e5f1e9);
-  color: #397553;
+  background: linear-gradient(145deg, #fffaf4, #ffedd8);
+  color: #9a5a21;
 }
 
 .luna-sec-file > strong {
@@ -1114,7 +1138,7 @@ a { text-decoration: none; color: inherit; }
   top: 0;
   padding: 13px 14px;
   border-bottom: 1px solid #dce4df;
-  background: #eef3f0;
+  background: #f5f3f0;
   color: #53625a;
   font-size: 10px;
   font-weight: 700;
@@ -1144,7 +1168,7 @@ a { text-decoration: none; color: inherit; }
 .luna-financial-table tbody tr:hover { background: #f2f7f4; }
 
 .luna-table-link {
-  color: #176b46;
+  color: #9a5a21;
   font-weight: 650;
   text-decoration: none;
   white-space: nowrap;
@@ -1187,7 +1211,7 @@ a { text-decoration: none; color: inherit; }
 }
 
 .luna-placeholder-state > svg {
-  color: #729483;
+  color: #c37a3a;
 }
 
 .luna-placeholder-state strong {
@@ -1201,6 +1225,7 @@ a { text-decoration: none; color: inherit; }
 
 @media (max-width: 900px) {
   .luna-terminal-window { display: none; }
+  .marketmole-desktop-mascot { display: none; }
   .luna-desktop-windows { width: min(760px, calc(100% - 120px)); }
   .luna-analysis-window { width: 100%; flex-basis: 100%; }
 }
@@ -1326,7 +1351,7 @@ a { text-decoration: none; color: inherit; }
   border-radius: 8px;
   background: var(--ink);
   color: #fff;
-  font-family: 'Space Grotesk', sans-serif;
+  font-family: 'Inter', 'SF Pro Display', system-ui, sans-serif;
 }
 
 .landing-nav {
@@ -1753,7 +1778,7 @@ a { text-decoration: none; color: inherit; }
   gap: 20px;
 }
 .wordmark {
-  font-family: 'Space Grotesk', sans-serif;
+  font-family: 'Inter', 'SF Pro Display', system-ui, sans-serif;
   font-weight: 700;
   letter-spacing: -0.04em;
 }
@@ -1816,7 +1841,7 @@ a { text-decoration: none; color: inherit; }
   margin: 0 auto;
   padding: 18px 18px 32px;
   color: var(--ink);
-  font-family: 'DM Sans', sans-serif;
+  font-family: 'Inter', 'SF Pro Display', system-ui, sans-serif;
 }
 
 .chat-shell {

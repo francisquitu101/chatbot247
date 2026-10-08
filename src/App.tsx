@@ -64,7 +64,7 @@ function App() {
   }, [])
 
   if (authLoading) {
-    return <div className="center-state"><strong>Preparing LUNA...</strong></div>
+    return <div className="center-state"><strong>Preparing MarketMole...</strong></div>
   }
 
   if (!supabase) {

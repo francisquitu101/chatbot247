@@ -23,7 +23,7 @@ function formatMoney(value: number | null | undefined) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(value)
 }
 
-function formatLunaTimestamp(value: string | null | undefined) {
+function formatMarketMoleTimestamp(value: string | null | undefined) {
   if (!value) return '—'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '—'
@@ -34,7 +34,7 @@ function formatFilingDate(value: string | null | undefined) {
   if (!value) return '—'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '—'
-  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(date)
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(date)
 }
 
 function getStatusLabel(processingStatus: string | undefined | null) {
@@ -317,6 +317,7 @@ export function AnalystExperienceDisplay({
 
   return (
     <div className="luna-chat-shell">
+      <img className="marketmole-desktop-mascot" src="/branding/marketmole-mascot.png" alt="" aria-hidden="true" />
       <div className="luna-desktop-icons" aria-label="Fuentes de datos">
         {desktopSources.map(({ id, label, Icon }) => (
           <button
@@ -334,18 +335,22 @@ export function AnalystExperienceDisplay({
 
       <div className="luna-desktop-windows">
       <div className="luna-window luna-analysis-window">
-        <div className="luna-titlebar" aria-label="LUNA application window">
+        <div className="luna-titlebar" aria-label="MarketMole application window">
           <div className="luna-window-controls" aria-hidden="true">
             <span className="luna-window-control close" />
             <span className="luna-window-control minimize" />
             <span className="luna-window-control maximize" />
           </div>
-          <span className="luna-titlebar-label">LUNA · {activeTitle}</span>
+          <span className="luna-titlebar-label luna-brand-title">
+            <img src="/branding/marketmole-icon.png" alt="" />
+            <span>MarketMole · {activeTitle}</span>
+          </span>
           <span className="luna-titlebar-spacer" aria-hidden="true" />
         </div>
         <header className="luna-window-header">
-          <div className="luna-mini-ident" aria-label={`Luna analyst for ${activeTicker}`}>
-            <span className="luna-mini-name">LUNA</span>
+          <div className="luna-mini-ident" aria-label={`MarketMole analyst for ${activeTicker}`}>
+            <img className="marketmole-header-icon" src="/branding/marketmole-icon.png" alt="" />
+            <span className="luna-mini-name">MarketMole</span>
             <span className="luna-mini-divider">·</span>
             <span className="luna-mini-ticker">{activeTicker}</span>
           </div>
@@ -510,7 +515,7 @@ export function AnalystExperienceDisplay({
 
         {activeApp === 'analysis' && <main className="luna-chat-feed" aria-live="polite">
           {researchTranscript.length === 0 ? (
-            <div className="empty-research-state">No LUNA analysis is available yet.</div>
+            <div className="empty-research-state">No MarketMole analysis is available yet.</div>
           ) : researchTranscript.map((message) => (
             <article key={message.id} className={`luna-chat-message ${message.kind}`}>
               {message.source && (
@@ -522,8 +527,8 @@ export function AnalystExperienceDisplay({
               )}
 
               <div className="luna-chat-meta">
-                <span className="luna-chat-author">LUNA</span>
-                <time>{formatLunaTimestamp(message.stamp)}</time>
+                <span className="luna-chat-author">MarketMole</span>
+                <time>{formatMarketMoleTimestamp(message.stamp)}</time>
               </div>
 
               {message.label && <div className="mini-tag">{message.label}</div>}
@@ -568,14 +573,14 @@ export function AnalystExperienceDisplay({
         </footer>
       </div>
 
-      <aside className="luna-window luna-terminal-window" aria-label="LUNA Core Terminal">
+      <aside className="luna-window luna-terminal-window" aria-label="MarketMole Terminal">
         <div className="luna-titlebar luna-terminal-titlebar">
           <div className="luna-window-controls" aria-hidden="true">
             <span className="luna-window-control close" />
             <span className="luna-window-control minimize" />
             <span className="luna-window-control maximize" />
           </div>
-          <span className="luna-titlebar-label">LUNA Core Terminal</span>
+          <span className="luna-titlebar-label">MarketMole Terminal</span>
           <span className="luna-titlebar-spacer" aria-hidden="true" />
         </div>
         <div className="luna-terminal-content">
