@@ -1230,6 +1230,382 @@ a { text-decoration: none; color: inherit; }
   font-size: 12px;
 }
 
+.luna-report-view {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 18px;
+  overscroll-behavior: contain;
+}
+
+.luna-report-inbox {
+  width: min(100%, 720px);
+  margin: 0 auto;
+}
+
+.luna-report-inbox-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 4px 2px 18px;
+}
+
+.luna-report-eyebrow,
+.luna-report-document-type {
+  color: #78847f;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.luna-report-inbox-heading h2 {
+  margin: 5px 0 0;
+  color: #202923;
+  font-size: 21px;
+  letter-spacing: -0.04em;
+}
+
+.luna-report-count {
+  padding-bottom: 3px;
+  color: #68766f;
+  font-size: 11px;
+}
+
+.luna-report-list {
+  display: grid;
+  gap: 9px;
+}
+
+.luna-report-item {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  width: 100%;
+  min-width: 0;
+  padding: 13px 15px;
+  border: 1px solid rgba(19, 33, 39, 0.09);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.84);
+  color: #202923;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+.luna-report-item:hover,
+.luna-report-item:focus-visible {
+  transform: translateY(-1px);
+  border-color: rgba(22, 101, 73, 0.3);
+  background: #fff;
+  outline: none;
+}
+
+.luna-report-file-icon {
+  display: grid;
+  flex: 0 0 42px;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid rgba(22, 101, 73, 0.12);
+  border-radius: 10px;
+  background: #f1f7f3;
+  color: #28674c;
+}
+
+.luna-report-item-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 5px;
+}
+
+.luna-report-item-copy strong {
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.luna-report-item-copy > span {
+  color: #77827c;
+  font-size: 10px;
+}
+
+.luna-report-item-arrow {
+  flex: 0 0 auto;
+  color: #738078;
+}
+
+.luna-report-reader {
+  width: 100%;
+  padding-bottom: 8px;
+}
+
+.luna-report-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 14px 2px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #e5e7eb;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.luna-report-back:hover,
+.luna-report-back:focus-visible {
+  background: rgba(255, 255, 255, 0.12);
+  outline: none;
+}
+
+.luna-report-paper {
+  width: min(100%, 768px);
+  min-height: 520px;
+  margin: 0 auto;
+  padding: 40px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.2), 0 2px 8px rgba(0, 0, 0, 0.08);
+  color: #171717;
+}
+
+.luna-report-document-header {
+  padding-bottom: 24px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.luna-report-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 22px;
+  color: #252b31;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.luna-report-brand img {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+
+.luna-report-paper .luna-report-document-type {
+  color: #6f7772;
+}
+
+.luna-report-paper .luna-report-document-header h1 {
+  margin: 8px 0 18px;
+  color: #171717;
+  font-size: clamp(22px, 3vw, 30px);
+  line-height: 1.2;
+  letter-spacing: -0.045em;
+  overflow-wrap: anywhere;
+}
+
+.luna-report-document-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 24px;
+  color: #424a45;
+  font-size: 11px;
+}
+
+.luna-report-document-meta span {
+  display: grid;
+  gap: 4px;
+  min-width: 120px;
+}
+
+.luna-report-document-meta strong {
+  color: #78817c;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.luna-report-section {
+  padding: 21px 0;
+  border-bottom: 1px solid #eceeed;
+}
+
+.luna-report-paper .luna-report-section h2 {
+  margin: 0 0 10px;
+  color: #202923;
+  font-size: 14px;
+  letter-spacing: -0.02em;
+}
+
+.luna-report-paper .luna-report-section p {
+  margin: 0 0 10px;
+  color: #424a45;
+  font-size: 12px;
+  line-height: 1.75;
+  white-space: pre-line;
+  max-height: none;
+  overflow: visible;
+}
+
+.luna-report-paper .luna-report-section p:last-child {
+  margin-bottom: 0;
+}
+
+.luna-report-valuation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+  margin: 4px 0 12px;
+}
+
+.luna-report-valuation span {
+  color: #78817c;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.luna-report-valuation strong {
+  color: #202923;
+  font-size: 16px;
+}
+
+.luna-report-paper .luna-report-impact-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.luna-report-impact-meta li {
+  padding: 5px 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  color: #606a64;
+  font-size: 9px;
+}
+
+.luna-report-document-footer {
+  padding-top: 15px;
+  color: #858d88;
+  font-size: 9px;
+}
+
+.luna-news-view {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  padding: 20px;
+  overscroll-behavior: contain;
+}
+
+.luna-news-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  width: min(100%, 720px);
+  margin: 0 auto;
+}
+
+.luna-news-heading h2 {
+  margin: 5px 0 0;
+  color: #202923;
+  font-size: 21px;
+  letter-spacing: -0.04em;
+}
+
+.luna-news-list {
+  display: grid;
+  gap: 10px;
+  width: min(100%, 720px);
+  margin: 0 auto;
+}
+
+.luna-news-item {
+  padding: 15px 17px;
+  border: 1px solid rgba(19, 33, 39, 0.09);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.luna-news-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px 14px;
+  color: #77827c;
+  font-size: 10px;
+}
+
+.luna-news-item-meta span {
+  color: #28674c;
+  font-weight: 700;
+}
+
+.luna-news-item h3 {
+  margin: 9px 0;
+  color: #202923;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.luna-news-item > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #28674c;
+  font-size: 10px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.luna-news-item > a:hover {
+  text-decoration: underline;
+}
+
+.luna-news-empty {
+  display: grid;
+  flex: 1;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  width: min(100%, 520px);
+  margin: 0 auto;
+  padding: 30px;
+  color: #78847f;
+  text-align: center;
+}
+
+.luna-news-empty > svg {
+  color: #6e9c80;
+}
+
+.luna-news-empty strong {
+  color: #263a30;
+  font-size: 14px;
+}
+
+.luna-news-empty span {
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 900px) {
   .luna-terminal-window { display: none; }
   .marketmole-desktop-mascot { display: none; }
@@ -1258,9 +1634,11 @@ a { text-decoration: none; color: inherit; }
   }
 
   .luna-desktop-icon {
-    width: 84px;
+    width: auto;
+    min-width: 0;
+    flex: 1 1 0;
     padding: 4px 2px;
-    font-size: 10px;
+    font-size: 9px;
   }
 
   .luna-desktop-icon-art {
@@ -1283,9 +1661,16 @@ a { text-decoration: none; color: inherit; }
   }
 
   .luna-window-header,
-  .luna-chat-feed {
+  .luna-chat-feed,
+  .luna-report-view,
+  .luna-news-view {
     padding-left: 14px;
     padding-right: 14px;
+  }
+
+  .luna-report-paper {
+    min-height: 0;
+    padding: 26px 22px;
   }
 
   .luna-titlebar { min-height: 36px; }

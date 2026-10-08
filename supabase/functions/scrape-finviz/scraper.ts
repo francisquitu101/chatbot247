@@ -7,7 +7,6 @@ import type { Scraper, ScrapedItemDraft } from '../_shared/scraper.ts'
 const FINVIZ_URL = 'https://finviz.com/quote.ashx?t='
 const FINVIZ_FILINGS_URL = 'https://finviz.com/stock?t='
 const FINVIZ_TIME_ZONE = 'America/New_York'
-const FINVIZ_MAX_NEWS_ROWS = 300
 const KURA_DIRECT_FETCH_TIMEOUT_MS = 10_000
 
 export type FinvizAnalystRatingDraft = {
@@ -237,6 +236,16 @@ function extractNewsRows(tableHtml: string): string[] {
   return [...tableHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map((match) => match[1] ?? '').filter((rowHtml) => rowHtml.trim().length > 0)
 }
 
+function extractFinvizNewsTable(html: string): string | null {
+  for (const match of html.matchAll(/<table\b([^>]*)>[\s\S]*?<\/table>/gi)) {
+    const attributes = match[1] ?? ''
+    const tableIdentity = [...attributes.matchAll(/\b(?:id|class)\s*=\s*["']([^"']*)["']/gi)]
+      .flatMap((attribute) => (attribute[1] ?? '').split(/\s+/))
+    if (tableIdentity.some((value) => value.toLowerCase() === 'news-table')) return match[0]
+  }
+  return null
+}
+
 function extractTableCells(rowHtml: string): string[] {
   return [...rowHtml.matchAll(/<(?:td|th)\b[^>]*>([\s\S]*?)<\/(?:td|th)>/gi)].map((match) => match[1] ?? '')
 }
@@ -461,13 +470,16 @@ function dedupeInsiderTrades(items: FinvizInsiderTradeDraft[]): FinvizInsiderTra
 }
 
 function resolveDirectNewsUrls(html: string, baseUrl: string): string {
-  return html.replace(/(<table\b[^>]*\b(?:id|class)\s*=\s*["'][^"']*\bnews-table\b[^"']*["'][^>]*>[\s\S]*?<\/table>)/i, (tableHtml) => tableHtml.replace(/(\bhref\s*=\s*["'])([^"']+)(["'])/gi, (_match, prefix: string, href: string, suffix: string) => {
+  const tableHtml = extractFinvizNewsTable(html)
+  if (!tableHtml) return html
+  const normalizedTable = tableHtml.replace(/(\bhref\s*=\s*["'])([^"']+)(["'])/gi, (_match, prefix: string, href: string, suffix: string) => {
     try {
       return `${prefix}${new URL(href, baseUrl).toString()}${suffix}`
     } catch {
       return `${prefix}${href}${suffix}`
     }
-  }))
+  })
+  return html.replace(tableHtml, normalizedTable)
 }
 
 const KNOWN_UI_TITLES = new Set([
@@ -525,14 +537,13 @@ function isNavigationUrl(url: string): boolean {
   return false
 }
 
-function extractLinksFromCell(cellHtml: string): { href: string | null; text: string | null } {
-  const hrefMatch = cellHtml.match(/<a\b[^>]*\shref\s*=\s*["']([^"']+)["'][^>]*>/i)
-  const textMatch = cellHtml.match(/<a\b[^>]*>([\s\S]*?)<\/a>/i)
-
-  const href = hrefMatch?.[1] ?? null
-  const text = textMatch ? normalizeText(decodeHtmlEntities(textMatch[1])) : null
-
-  return { href, text }
+function extractLinksFromCell(cellHtml: string): Array<{ href: string; text: string | null }> {
+  return [...cellHtml.matchAll(/<a\b[^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)]
+    .map((match) => ({
+      href: decodeHtmlEntities(match[1] ?? '').trim(),
+      text: normalizeText(decodeHtmlEntities(match[2] ?? '')),
+    }))
+    .filter((link) => link.href.length > 0)
 }
 
 function extractSecForm4Url(cellHtml: string, baseUrl: string): string {
@@ -566,19 +577,15 @@ function extractProviderFromCell(cellHtml: string): string | null {
   return null
 }
 
-function extractNews(document: FirecrawlDocument, ticker: string, sourceId: string): ScrapedItemDraft[] {
+function extractNews(document: FirecrawlDocument, ticker: string, sourceId: string, baseUrl: string): ScrapedItemDraft[] {
   const html = document.html ?? document.markdown ?? ''
   if (!html || html.trim().length === 0) return []
 
-  const tableMatch = html.match(/<table\b[^>]*\b(?:id|class)\s*=\s*["'][^"']*\bnews-table\b[^"']*["'][^>]*>[\s\S]*?<\/table>/i)
-  if (!tableMatch) {
-    return []
-  }
-
-  const tableHtml = tableMatch[0]
+  const tableHtml = extractFinvizNewsTable(html)
+  if (!tableHtml) return []
   const tableTickerMatch = tableHtml.match(/data-ticker\s*=\s*["']([^"']+)["']/i)
   const tableTicker = tableTickerMatch ? normalizeTicker(tableTickerMatch[1]) : null
-  const rows = extractNewsRows(tableHtml).slice(0, FINVIZ_MAX_NEWS_ROWS)
+  const rows = extractNewsRows(tableHtml)
 
   if (tableTicker && tableTicker !== ticker) {
     return []
@@ -588,75 +595,66 @@ function extractNews(document: FirecrawlDocument, ticker: string, sourceId: stri
   const seenUrls = new Set<string>()
   let currentNewsDate: string | null = getFinvizToday()
   for (const row of rows) {
-    const cellMatches = [...row.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map((match) => match[1] ?? '')
-    if (cellMatches.length < 2) {
-      continue
-    }
+    const cells = extractTableCells(row)
+    if (cells.length === 0) continue
+    const firstCellText = normalizeText(decodeHtmlEntities((cells[0] ?? '').replace(/<[^>]+>/g, ' ')))
+    const secondCellText = normalizeText(decodeHtmlEntities((cells[1] ?? '').replace(/<[^>]+>/g, ' ')))
+    const timestampInFirstCell = Boolean(firstCellText && (/^[A-Za-z]{3}-\d{2}-\d{2}\s+\d{1,2}:\d{2}(?:AM|PM)$/i.test(firstCellText) || /^(?:Today\s+)?\d{1,2}:\d{2}(?:AM|PM)$/i.test(firstCellText)))
+    const timestampInFirstTwoCells = !timestampInFirstCell && Boolean(
+      firstCellText && secondCellText && /^[A-Za-z]{3}-\d{2}-\d{2}$/i.test(firstCellText) && /^\d{1,2}:\d{2}(?:AM|PM)$/i.test(secondCellText),
+    )
+    const timestamp = timestampInFirstCell
+      ? firstCellText
+      : timestampInFirstTwoCells
+        ? `${firstCellText} ${secondCellText}`
+        : null
+    const timestampCellCount = timestampInFirstTwoCells ? 2 : timestampInFirstCell ? 1 : 0
+    const parsedTimestamp = parseFinvizTimestamp(timestamp, currentNewsDate)
+    const articleCells = cells.slice(timestampCellCount)
+    const providerCell = cells.length > 2 ? cells.at(-1) ?? '' : ''
+    const candidateLinks = articleCells.flatMap(extractLinksFromCell)
+    currentNewsDate = parsedTimestamp.currentNewsDate ?? currentNewsDate
+    const { published_at, rawTimestamp } = parsedTimestamp
 
-    const timestampCell = cellMatches[0] ?? ''
-    const articleCell = cellMatches[1] ?? ''
-    const providerCell = cellMatches[2] ?? ''
+    for (const articleLink of candidateLinks) {
+      const title = articleLink.text
+      if (!title || isKnownUiTitle(title) || looksLikeNumericTitle(title)) continue
 
-    const articleLink = extractLinksFromCell(articleCell)
-    const timestamp = normalizeText(decodeHtmlEntities(timestampCell.replace(/<[^>]+>/g, ' ')))
-    const title = normalizeText(articleLink.text)
-    const url = articleLink.href ? articleLink.href.trim() : ''
+      const publisher = extractProviderFromCell(providerCell)
+      if (publisher && title.toLowerCase() === publisher.toLowerCase()) continue
 
-    if (!timestamp && !articleLink.href) {
-      continue
-    }
+      const url = toAbsoluteFinvizUrl(articleLink.href, baseUrl)
+      if (isNavigationUrl(url)) continue
 
-    if (!articleLink.href) {
-      continue
-    }
-
-    if (!title) {
-      continue
-    }
-
-    if (isKnownUiTitle(title) || looksLikeNumericTitle(title)) {
-      continue
-    }
-
-    if (isNavigationUrl(url)) {
-      continue
-    }
-
-    try {
-      const parsedUrl = new URL(url)
-      if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      try {
+        const parsedUrl = new URL(url)
+        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') continue
+      } catch {
         continue
       }
-    } catch {
-      continue
+
+      if (seenUrls.has(url)) continue
+      const provider = publisher ?? extractProviderFromTitle(title)
+      seenUrls.add(url)
+      items.push({
+        source_id: sourceId,
+        ticker,
+        item_type: 'news',
+        title,
+        content: null,
+        author: null,
+        url,
+        published_at,
+        scraped_at: new Date().toISOString(),
+        content_hash: '',
+        metadata: {
+          extractor: 'finviz-news-table',
+          provider: provider ?? null,
+          raw_timestamp: rawTimestamp ?? timestamp ?? null,
+          display_timezone: FINVIZ_TIME_ZONE,
+        },
+      })
     }
-
-    if (!title || seenUrls.has(url)) {
-      continue
-    }
-
-    const provider = extractProviderFromCell(providerCell) ?? extractProviderFromCell(articleCell) ?? extractProviderFromTitle(title)
-    const { published_at, rawTimestamp, currentNewsDate: nextNewsDate } = parseFinvizTimestamp(timestamp, currentNewsDate)
-    currentNewsDate = nextNewsDate ?? currentNewsDate
-
-    seenUrls.add(url)
-    items.push({
-      source_id: sourceId,
-      ticker,
-      item_type: 'news',
-      title,
-      content: null,
-      author: null,
-      url,
-      published_at,
-      scraped_at: new Date().toISOString(),
-      content_hash: '',
-      metadata: {
-        extractor: 'finviz-news-table',
-        provider: provider ?? null,
-        raw_timestamp: rawTimestamp ?? timestamp ?? null,
-      },
-    })
   }
 
   return items
@@ -697,13 +695,14 @@ async function scrapeFinvizDetailed({ ticker }: { ticker: string }): Promise<Fin
       const html = await response.text()
       pageHtml = html
       pageBaseUrl = response.url
-      const newsTableDetected = /<table\b[^>]*\b(?:id|class)\s*=\s*["'][^"']*\bnews-table\b[^"']*["'][^>]*>/i.test(html)
+      const newsTable = extractFinvizNewsTable(html)
+      const newsTableDetected = newsTable !== null
       if (response.ok && contentType && /(?:text\/html|application\/xhtml\+xml)/i.test(contentType) && newsTableDetected) {
         const normalizedHtml = resolveDirectNewsUrls(html, response.url)
         pageHtml = normalizedHtml
-        const tableMatch = normalizedHtml.match(/<table\b[^>]*\b(?:id|class)\s*=\s*["'][^"']*\bnews-table\b[^"']*["'][^>]*>[\s\S]*?<\/table>/i)
-        directRows = tableMatch ? extractNewsRows(tableMatch[0]).length : 0
-        items = extractNews({ html: normalizedHtml }, requestedTicker, sourceId)
+        const tableHtml = extractFinvizNewsTable(normalizedHtml)
+        directRows = tableHtml ? extractNewsRows(tableHtml).length : 0
+        items = extractNews({ html: normalizedHtml }, requestedTicker, sourceId, response.url)
         directSucceeded = items.length > 0
       }
     } catch {
@@ -716,7 +715,7 @@ async function scrapeFinvizDetailed({ ticker }: { ticker: string }): Promise<Fin
       const document = await createFirecrawlClient().scrape(finvizUrl)
       pageHtml = document.html ?? document.markdown ?? ''
       pageBaseUrl = finvizUrl
-      items = extractNews({ html: pageHtml }, requestedTicker, sourceId)
+      items = extractNews({ html: pageHtml }, requestedTicker, sourceId, pageBaseUrl)
       console.info(JSON.stringify({ event: 'finviz_transport', ticker: requestedTicker, method: 'firecrawl', reason: 'direct_fetch_failed', items: items.length, durationMs: Date.now() - startedAt }))
     }
 

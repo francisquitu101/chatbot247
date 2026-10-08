@@ -10,7 +10,19 @@ export type CompanyData = {
   insiderTrades: FinvizInsiderTrade[]
 }
 
+export type FinvizNewsItem = Pick<ScrapedItem, 'id' | 'ticker' | 'title' | 'author' | 'url' | 'published_at' | 'scraped_at' | 'metadata' | 'item_type'>
 export type FinvizCompanyActivity = Pick<CompanyData, 'ratings' | 'insiderTrades'>
+
+export type TerminalActivityEvent = {
+  id: string
+  timestamp: string
+  message: string
+}
+
+export type TerminalActivityResult = {
+  events: TerminalActivityEvent[]
+  errors: string[]
+}
 
 export type CompanySummary = {
   stock: TrackedStock | null
@@ -73,6 +85,114 @@ export async function getFinvizCompanyActivity(client: SupabaseClient, ticker: s
     ratings: (ratingsResult.data ?? []) as FinvizAnalystRating[],
     insiderTrades: (insiderResult.data ?? []) as FinvizInsiderTrade[],
   }
+}
+
+export async function getFinvizCompanyNews(client: SupabaseClient, ticker: string): Promise<FinvizNewsItem[]> {
+  const { data, error } = await client.rpc('get_public_finviz_news', {
+    p_ticker: ticker.toUpperCase(),
+  })
+
+  if (error) throw error
+  return ((data ?? []) as FinvizNewsItem[]).sort((left, right) => {
+    const leftTimestamp = new Date(left.published_at ?? left.scraped_at).getTime()
+    const rightTimestamp = new Date(right.published_at ?? right.scraped_at).getTime()
+    return rightTimestamp - leftTimestamp
+  })
+}
+
+export async function getLatestTerminalActivity(
+  client: SupabaseClient,
+  ticker: string,
+  analystId: string,
+): Promise<TerminalActivityResult> {
+  const [insiderResult, newsResult, runResult] = await Promise.allSettled([
+    client.from('finviz_insider_trades')
+      .select('id, insider_name, transaction, transaction_date, scraped_at')
+      .eq('ticker', ticker.toUpperCase())
+      .order('transaction_date', { ascending: false, nullsFirst: false })
+      .limit(1)
+      .maybeSingle(),
+    getFinvizCompanyNews(client, ticker),
+    client.from('analyst_runs')
+      .select('id, status, completed_at, started_at, created_at')
+      .eq('analyst_id', analystId)
+      .eq('status', 'completed')
+      .order('completed_at', { ascending: false, nullsFirst: false })
+      .limit(1)
+      .maybeSingle(),
+  ])
+
+  const events: TerminalActivityEvent[] = []
+  const errors: string[] = []
+
+  if (insiderResult.status === 'fulfilled' && !insiderResult.value.error) {
+    const trade = insiderResult.value.data
+    if (trade) {
+      events.push({
+        id: `insider-${trade.id}`,
+        timestamp: trade.scraped_at,
+        message: `🚨 Insider action: ${trade.transaction || 'Trade'} by ${trade.insider_name || 'unknown insider'}`,
+      })
+    }
+  } else {
+    const message = insiderResult.status === 'rejected'
+      ? getQueryErrorMessage(insiderResult.reason)
+      : getQueryErrorMessage(insiderResult.value.error)
+    errors.push(`Insider feed: ${message}`)
+  }
+
+  if (newsResult.status === 'fulfilled') {
+    const latestNews = newsResult.value.reduce<FinvizNewsItem | null>((latest, item) => {
+      if (!latest) return item
+      return new Date(item.scraped_at).getTime() > new Date(latest.scraped_at).getTime() ? item : latest
+    }, null)
+    if (latestNews) {
+      const headline = latestNews.title?.trim()
+      events.push({
+        id: `news-${latestNews.id}`,
+        timestamp: latestNews.scraped_at,
+        message: `📰 Ingested new market article${headline ? `: ${headline}` : ''}`,
+      })
+    }
+  } else {
+    errors.push(`Market news: ${getQueryErrorMessage(newsResult.reason)}`)
+  }
+
+  if (runResult.status === 'fulfilled' && !runResult.value.error) {
+    const run = runResult.value.data
+    if (run) {
+      events.push({
+        id: `run-${run.id}`,
+        timestamp: run.completed_at ?? run.started_at ?? run.created_at,
+        message: '🧠 SEC analysis complete. [OK]',
+      })
+    }
+  } else {
+    const message = runResult.status === 'rejected'
+      ? getQueryErrorMessage(runResult.reason)
+      : getQueryErrorMessage(runResult.value.error)
+    errors.push(`Analysis runs: ${message}`)
+  }
+
+  events.sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime())
+  return { events, errors }
+}
+
+function getQueryErrorMessage(error: unknown): string {
+  if (error && typeof error === 'object') {
+    const fields = error as Record<string, unknown>
+    const code = typeof fields.code === 'string' ? fields.code : ''
+    const text = [fields.message, fields.details]
+      .filter((value): value is string => typeof value === 'string')
+      .join(' ')
+      .toLowerCase()
+    if (code === '42883' || code === 'PGRST202' || text.includes('get_public_finviz_news')) {
+      return 'Apply Supabase migration 20261008170700_allow_public_finviz_news.sql.'
+    }
+  }
+  if (error instanceof Error) return error.message
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') return error.message
+  return 'Request failed.'
 }
 
 export async function getCompanySummary(client: SupabaseClient, ticker: string): Promise<CompanySummary> {

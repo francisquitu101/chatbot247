@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { ArrowRight, ChartColumnIncreasing, Chrome, ExternalLink, FileText, FolderOpen, LogOut, RefreshCw, Star } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ChartColumnIncreasing, Chrome, ExternalLink, FileText, FolderOpen, LogOut, Newspaper, RefreshCw, Star } from 'lucide-react'
 import { getPrivateAnalystByTicker, getPublicAnalystByTicker } from '../lib/analystData'
-import { getFinvizCompanyActivity } from '../lib/queries/company'
+import { getFinvizCompanyActivity, getFinvizCompanyNews, getLatestTerminalActivity, type TerminalActivityEvent } from '../lib/queries/company'
 import { getAuthRedirectUrl, supabase } from '../lib/supabase'
 
 const DEMO_PATTERNS = [/\[DEMO SEEDED\]/i, /demo_seed/i, /synthetic_test/i, /demo seed/i, /synthetic/i, /development test/i]
@@ -28,6 +28,21 @@ function formatMarketMoleTimestamp(value: string | null | undefined) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '—'
   return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }).format(date).replace(',', ' ·')
+}
+
+function formatFinvizTimestamp(value: string | null | undefined) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: 'America/New_York',
+    timeZoneName: 'short',
+  }).format(date).replace(',', ' ·')
 }
 
 function formatFilingDate(value: string | null | undefined) {
@@ -72,7 +87,42 @@ function readText(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null
 }
 
-type AnalystApp = 'sec' | 'insider' | 'ratings' | 'analysis'
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) return error.message
+  if (error && typeof error === 'object') {
+    const errorFields = error as Record<string, unknown>
+    const errorCode = typeof errorFields.code === 'string' ? errorFields.code : ''
+    const errorDetails = [errorFields.message, errorFields.details]
+      .filter((value): value is string => typeof value === 'string')
+      .join(' ')
+      .toLowerCase()
+    if (
+      errorCode === '42501'
+      || errorCode === '42883'
+      || errorCode === 'PGRST202'
+      || errorDetails.includes('permission denied for table scraped_items')
+      || errorDetails.includes('get_public_finviz_news')
+    ) {
+      return 'Apply Supabase migration 20261008170700_allow_public_finviz_news.sql to enable the public Finviz news feed.'
+    }
+    const details = ['message', 'details', 'hint', 'code']
+      .map((field) => errorFields[field])
+      .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    if (details.length > 0) return details.join(' · ')
+  }
+  return fallback
+}
+
+type AnalystApp = 'sec' | 'insider' | 'ratings' | 'news' | 'analysis'
+
+function getExternalHttpUrl(value: string): string | null {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : null
+  } catch {
+    return null
+  }
+}
 
 function getFilingType(evidence: { title?: string | null; raw_metadata?: Record<string, unknown> | null } | null): string | null {
   if (!evidence) return null
@@ -97,13 +147,18 @@ export function AnalystExperienceDisplay({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [authError, setAuthError] = useState<string | null>(null)
+  const [newsError, setNewsError] = useState<string | null>(null)
   const [authBusy, setAuthBusy] = useState(false)
   const [enqueueBusy, setEnqueueBusy] = useState(false)
   const [enqueueMessage, setEnqueueMessage] = useState<string | null>(null)
   const [enqueueError, setEnqueueError] = useState<string | null>(null)
   const [activeApp, setActiveApp] = useState<AnalystApp>('sec')
+  const [selectedReportId, setSelectedReportId] = useState<string | null>(null)
   const [data, setData] = useState<Awaited<ReturnType<typeof getPublicAnalystByTicker>> | null>(null)
   const [finvizActivity, setFinvizActivity] = useState<Awaited<ReturnType<typeof getFinvizCompanyActivity>>>({ ratings: [], insiderTrades: [] })
+  const [finvizNews, setFinvizNews] = useState<Awaited<ReturnType<typeof getFinvizCompanyNews>>>([])
+  const [terminalActivity, setTerminalActivity] = useState<TerminalActivityEvent[]>([])
+  const [terminalActivityErrors, setTerminalActivityErrors] = useState<string[]>([])
 
   const activeTicker = useMemo(() => (ticker ?? 'NVDA').toUpperCase(), [ticker])
 
@@ -167,6 +222,7 @@ export function AnalystExperienceDisplay({
       try {
         setLoading(true)
         setError(null)
+        setNewsError(null)
 
         const result = privateView
           ? await (async () => {
@@ -177,10 +233,19 @@ export function AnalystExperienceDisplay({
           })()
           : await getPublicAnalystByTicker(client, activeTicker)
         const marketActivity = await getFinvizCompanyActivity(client, activeTicker)
+        let marketNews: Awaited<ReturnType<typeof getFinvizCompanyNews>> = []
+        let marketNewsError: string | null = null
+        try {
+          marketNews = await getFinvizCompanyNews(client, activeTicker)
+        } catch (newsFetchError) {
+          marketNewsError = getErrorMessage(newsFetchError, 'Finviz news request failed.')
+        }
 
         if (!isMounted) return
         setData(result)
         setFinvizActivity(marketActivity)
+        setFinvizNews(marketNews)
+        setNewsError(marketNewsError)
       } catch (fetchError) {
         if (!isMounted) return
         setError(fetchError instanceof Error ? fetchError.message : 'Unable to load analyst.')
@@ -208,6 +273,44 @@ export function AnalystExperienceDisplay({
     }
   }, [activeTicker, privateView, session?.user.id])
 
+  useEffect(() => {
+    const client = supabase
+    const analystId = data?.analyst.id
+    if (!client || !analystId) {
+      setTerminalActivity([])
+      setTerminalActivityErrors([])
+      return
+    }
+
+    let isMounted = true
+    const refreshTerminalActivity = async () => {
+      try {
+        const activity = await getLatestTerminalActivity(client, activeTicker, analystId)
+        if (!isMounted) return
+        setTerminalActivity(activity.events)
+        setTerminalActivityErrors(activity.errors)
+      } catch (activityError) {
+        if (!isMounted) return
+        setTerminalActivityErrors([getErrorMessage(activityError, 'Unable to load terminal activity.')])
+      }
+    }
+
+    void refreshTerminalActivity()
+    const intervalId = window.setInterval(() => void refreshTerminalActivity(), 60_000)
+    const channel = client
+      .channel(`terminal-activity-${activeTicker}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'scraped_items', filter: `ticker=eq.${activeTicker}` }, () => { void refreshTerminalActivity() })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'finviz_insider_trades', filter: `ticker=eq.${activeTicker}` }, () => { void refreshTerminalActivity() })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'analyst_runs', filter: `analyst_id=eq.${analystId}` }, () => { void refreshTerminalActivity() })
+      .subscribe()
+
+    return () => {
+      isMounted = false
+      window.clearInterval(intervalId)
+      void client.removeChannel(channel)
+    }
+  }, [activeTicker, data?.analyst.id])
+
   const evidenceList = getRealEvidence(data?.evidenceItems)
   const processingStatus = typeof data?.state?.processing_status === 'string' ? data.state.processing_status : 'idle'
   const hasActiveRun = (data?.runs ?? []).some((run: { status: string }) => run.status === 'started')
@@ -219,17 +322,19 @@ export function AnalystExperienceDisplay({
     { id: 'sec' as const, label: 'SEC Filings', Icon: FolderOpen },
     { id: 'insider' as const, label: 'Insider Trading', Icon: ChartColumnIncreasing },
     { id: 'ratings' as const, label: 'Analyst Ratings', Icon: Star },
+    { id: 'news' as const, label: 'Market News', Icon: Newspaper },
     { id: 'analysis' as const, label: 'Analysis', Icon: FolderOpen },
   ]
 
   const realRuns = (data?.runs ?? []).filter((run) => {
     if (!run) return false
     if (run.status === 'failed') return false
+    if (!run.result_json) return false
     return Boolean(run.started_at || run.completed_at || run.created_at || run.evidence_id)
   }).sort((left, right) => {
     const leftStamp = new Date(left.completed_at ?? left.started_at ?? left.created_at ?? 0).getTime()
     const rightStamp = new Date(right.completed_at ?? right.started_at ?? right.created_at ?? 0).getTime()
-    return leftStamp - rightStamp
+    return rightStamp - leftStamp
   })
 
   const evidenceById = new Map((evidenceList ?? []).filter((item) => item.id).map((item) => [item.id as string, item]))
@@ -243,7 +348,6 @@ export function AnalystExperienceDisplay({
     const evidenceSourceDate = formatFilingDate(evidencePublishedAt)
     const thesisSummary = readText(result?.thesisSummary)
     const decisionSummary = readText(result?.decisionSummary)
-    const confidenceValue = typeof result?.confidence === 'number' ? result.confidence : undefined
     const thesisChanged = Boolean(result?.thesisChanged)
     const valuationChanged = Boolean(result?.valuationChanged)
     const previousFairValue = typeof result?.previousFairValue === 'number' ? result.previousFairValue : null
@@ -267,24 +371,32 @@ export function AnalystExperienceDisplay({
       kind: thesisChanged ? 'thesis' : valuationChanged ? 'valuation' : decisionSummary ? 'decision' : 'research',
       stamp,
       label,
+      reportTitle: `MarketMole Report: ${activeTicker} ${getFilingType(evidence) ?? 'Research Update'}`,
+      companyName: data?.analyst.company_name ?? activeTicker,
+      thesisSummary: thesisSummary ? cleanupDisplayText(thesisSummary) : null,
       primaryText: primaryText ? cleanupDisplayText(primaryText) : null,
       secondaryText: secondaryText ? cleanupDisplayText(secondaryText) : null,
       fairValueText,
+      valuationChanged,
+      previousFairValue,
+      newFairValue,
       source: sourceContext,
       sourceDate: evidenceSourceDate,
-      confidence: confidenceValue !== undefined ? `Confidence ${confidenceValue}%` : null,
       meta: [
         impact && (thesisChanged || valuationChanged) ? `Impact ${impact}` : null,
         materiality && (thesisChanged || valuationChanged) ? `Materiality ${materiality}` : null,
       ].filter((value): value is string => Boolean(value)),
     }
-  })
+  }).filter((report) => report.primaryText || report.thesisSummary || report.fairValueText)
+
+  const selectedReport = researchTranscript.find((report) => report.id === selectedReportId) ?? null
 
   const secFiles = evidenceList.filter((item) => item.source_type?.toUpperCase() === 'SEC')
   const activeTitle = {
     sec: 'SEC Filings',
     insider: 'Insider Tracker',
     ratings: 'Analyst Ratings',
+    news: 'Market News',
     analysis: 'Analysis',
   }[activeApp]
 
@@ -324,7 +436,10 @@ export function AnalystExperienceDisplay({
             key={id}
             type="button"
             className={`luna-desktop-icon ${activeApp === id ? 'selected' : ''}`}
-            onClick={() => setActiveApp(id)}
+            onClick={() => {
+              if (id !== 'analysis') setSelectedReportId(null)
+              setActiveApp(id)
+            }}
             aria-pressed={activeApp === id}
           >
             <span className="luna-desktop-icon-art"><Icon size={25} strokeWidth={1.7} /></span>
@@ -513,46 +628,141 @@ export function AnalystExperienceDisplay({
           </main>
         )}
 
-        {activeApp === 'analysis' && <main className="luna-chat-feed" aria-live="polite">
-          {researchTranscript.length === 0 ? (
-            <div className="empty-research-state">No MarketMole analysis is available yet.</div>
-          ) : researchTranscript.map((message) => (
-            <article key={message.id} className={`luna-chat-message ${message.kind}`}>
-              {message.source && (
-                <div className="luna-source-block">
-                  <span className="luna-source-label">Source</span>
-                  <strong>{message.source}</strong>
-                  {message.sourceDate && <span className="luna-source-date">Filed {message.sourceDate}</span>}
-                </div>
-              )}
-
-              <div className="luna-chat-meta">
-                <span className="luna-chat-author">MarketMole</span>
-                <time>{formatMarketMoleTimestamp(message.stamp)}</time>
+        {activeApp === 'news' && (
+          <main className="luna-news-view" aria-live="polite">
+            <div className="luna-news-heading">
+              <div>
+                <span className="luna-report-eyebrow">FINVIZ · {activeTicker}</span>
+                <h2>Market News</h2>
               </div>
+              <span className="luna-report-count">{finvizNews.length} {finvizNews.length === 1 ? 'article' : 'articles'}</span>
+            </div>
+            {newsError ? (
+              <div className="luna-news-empty" role="status">
+                <Newspaper size={25} />
+                <strong>News stream unavailable</strong>
+                <span>{newsError}</span>
+              </div>
+            ) : finvizNews.length === 0 ? (
+              <div className="luna-news-empty">
+                <Newspaper size={25} />
+                <strong>Awaiting news stream...</strong>
+                <span>Finviz headlines will appear here as they are collected.</span>
+              </div>
+            ) : (
+              <div className="luna-news-list">
+                {finvizNews.map((item) => {
+                  const publisher = readText(item.metadata.provider) ?? readText(item.author) ?? 'Finviz'
+                  const articleUrl = getExternalHttpUrl(item.url)
+                  const headline = cleanupDisplayText(item.title)
+                  return (
+                    <article className="luna-news-item" key={item.id}>
+                      <div className="luna-news-item-meta">
+                        <span>{publisher}</span>
+                        <time dateTime={item.published_at ?? undefined}>{formatFinvizTimestamp(item.published_at)}</time>
+                      </div>
+                      <h3>{headline}</h3>
+                      {articleUrl && (
+                        <a href={articleUrl} target="_blank" rel="noreferrer">
+                          Read original article <ExternalLink size={13} aria-hidden="true" />
+                        </a>
+                      )}
+                    </article>
+                  )
+                })}
+              </div>
+            )}
+          </main>
+        )}
 
-              {message.label && <div className="mini-tag">{message.label}</div>}
+        {activeApp === 'analysis' && (
+          <main className="luna-report-view" aria-live="polite">
+            {!selectedReport ? (
+              researchTranscript.length === 0 ? (
+                <div className="empty-research-state">No MarketMole reports are available yet.</div>
+              ) : (
+                <section className="luna-report-inbox" aria-label="Generated reports">
+                  <div className="luna-report-inbox-heading">
+                    <div>
+                      <span className="luna-report-eyebrow">RESEARCH LIBRARY</span>
+                      <h2>Generated Reports</h2>
+                    </div>
+                    <span className="luna-report-count">{researchTranscript.length} {researchTranscript.length === 1 ? 'report' : 'reports'}</span>
+                  </div>
+                  <div className="luna-report-list">
+                    {researchTranscript.map((report) => (
+                      <button
+                        key={report.id}
+                        type="button"
+                        className="luna-report-item"
+                        onClick={() => setSelectedReportId(report.id)}
+                      >
+                        <span className="luna-report-file-icon"><FileText size={23} strokeWidth={1.7} /></span>
+                        <span className="luna-report-item-copy">
+                          <strong>{report.reportTitle}</strong>
+                          <span>{formatMarketMoleTimestamp(report.stamp)}</span>
+                        </span>
+                        <ArrowRight className="luna-report-item-arrow" size={17} aria-hidden="true" />
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              )
+            ) : (
+              <section className="luna-report-reader">
+                <button type="button" className="luna-report-back" onClick={() => setSelectedReportId(null)}>
+                  <ArrowLeft size={16} />
+                  Back to reports
+                </button>
+                <article className="luna-report-paper">
+                  <header className="luna-report-document-header">
+                    <div className="luna-report-brand">
+                      <img src="/branding/marketmole-icon.png" alt="" />
+                      <span>MARKETMOLE RESEARCH</span>
+                    </div>
+                    <span className="luna-report-document-type">EQUITY RESEARCH REPORT</span>
+                    <h1>{selectedReport.reportTitle}</h1>
+                    <div className="luna-report-document-meta">
+                      <span><strong>Target company</strong>{selectedReport.companyName} ({activeTicker})</span>
+                      <span><strong>Report date</strong>{formatMarketMoleTimestamp(selectedReport.stamp)}</span>
+                      {selectedReport.source && <span><strong>Source document</strong>{selectedReport.source}</span>}
+                    </div>
+                  </header>
 
-              {message.primaryText && <p className="luna-chat-body">{message.primaryText}</p>}
-              {message.secondaryText && <p className="luna-chat-detail">{message.secondaryText}</p>}
+                  <section className="luna-report-section">
+                    <h2>Executive Summary</h2>
+                    <p>{selectedReport.primaryText ?? selectedReport.thesisSummary ?? 'No executive summary is available for this report.'}</p>
+                    {selectedReport.secondaryText && <p>{selectedReport.secondaryText}</p>}
+                  </section>
 
-              {message.fairValueText && (
-                <div className="luna-chat-valuation">
-                  <span>Fair value</span>
-                  <strong>{message.fairValueText}</strong>
-                </div>
-              )}
+                  <section className="luna-report-section">
+                    <h2>Valuation Impact</h2>
+                    {selectedReport.valuationChanged ? (
+                      <div className="luna-report-valuation">
+                        <span>Fair value impact</span>
+                        <strong>
+                          {selectedReport.previousFairValue !== null ? formatMoney(selectedReport.previousFairValue) : '—'}
+                          {' → '}
+                          {selectedReport.newFairValue !== null ? formatMoney(selectedReport.newFairValue) : '—'}
+                        </strong>
+                      </div>
+                    ) : (
+                      <p>No fair value change was identified in this analysis.</p>
+                    )}
+                    {selectedReport.thesisSummary && <p>{selectedReport.thesisSummary}</p>}
+                    {selectedReport.meta.length > 0 && (
+                      <ul className="luna-report-impact-meta">
+                        {selectedReport.meta.map((item) => <li key={item}>{item}</li>)}
+                      </ul>
+                    )}
+                  </section>
 
-              {message.confidence && <div className="luna-chat-confidence"><span>{message.confidence}</span></div>}
-
-              {message.meta.length > 0 && (
-                <div className="mini-meta-row subtle">
-                  {message.meta.map((tag) => <span key={`${message.id}-${tag}`}>{tag}</span>)}
-                </div>
-              )}
-            </article>
-          ))}
-        </main>}
+                  <footer className="luna-report-document-footer">Prepared by MarketMole · AI-assisted equity research</footer>
+                </article>
+              </section>
+            )}
+          </main>
+        )}
 
         <footer className="luna-window-footer">
           <div className="luna-enqueue-feedback" aria-live="polite">
@@ -584,11 +794,18 @@ export function AnalystExperienceDisplay({
           <span className="luna-titlebar-spacer" aria-hidden="true" />
         </div>
         <div className="luna-terminal-content">
-          <div className="luna-terminal-preview-label">VISUAL PREVIEW · NOT LIVE TELEMETRY</div>
-          <p><span>&gt;</span> Initializing SEC monitor...</p>
-          <p><span>&gt;</span> Polling EDGAR database... <b>[OK]</b></p>
-          <p><span>&gt;</span> Parsing Insider Form 4...</p>
-          <p><span>&gt;</span> Awaiting new jobs...</p>
+          <div className="luna-terminal-preview-label">LIVE ACTIVITY · AMERICA/NEW_YORK</div>
+          {terminalActivity.map((event) => (
+            <p key={event.id}>
+              <span>&gt;</span> [{formatFinvizTimestamp(event.timestamp)}] {event.message}
+            </p>
+          ))}
+          {terminalActivity.length === 0 && terminalActivityErrors.length === 0 && (
+            <p className="luna-terminal-empty"><span>&gt;</span> Awaiting market activity...</p>
+          )}
+          {terminalActivityErrors.map((message) => (
+            <p className="luna-terminal-error" key={message}><span>&gt;</span> Feed unavailable: {message}</p>
+          ))}
           <div className="luna-terminal-cursor" aria-hidden="true" />
         </div>
       </aside>
