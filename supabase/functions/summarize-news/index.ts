@@ -79,6 +79,24 @@ function normalizeArticleText(value: string): string | null {
   return text.slice(0, MAX_ARTICLE_TEXT_LENGTH)
 }
 
+function isTargetMentionedInTitle(title: string | null, ticker: string, companyName: string): boolean {
+  if (!title) return false
+  const normalizedTitle = title.toLowerCase()
+  const normalizedTicker = ticker.trim().toLowerCase()
+  if (normalizedTicker && new RegExp(`(^|[^a-z0-9])${normalizedTicker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-z0-9])`).test(normalizedTitle)) {
+    return true
+  }
+
+  const genericCompanyWords = new Set(['company', 'corporation', 'incorporated', 'limited', 'holdings', 'group', 'plc', 'llc', 'ltd', 'inc', 'corp'])
+  const companyAliases = companyName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word.length >= 4 && !genericCompanyWords.has(word))
+  return companyAliases.some((alias) => normalizedTitle.includes(alias))
+}
+
 async function fetchFromJina(url: URL): Promise<ArticleFetchResult> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), READER_TIMEOUT_MS)
@@ -228,6 +246,7 @@ async function summarizeWithOpenAI(
   headline: string | null,
   ticker: string,
   companyName: string,
+  allowRejection = true,
 ): Promise<string> {
   const apiKey = Deno.env.get('OPENAI_API_KEY')
   if (!apiKey) throw new Error('OPENAI_API_KEY_NOT_CONFIGURED')
@@ -235,7 +254,9 @@ async function summarizeWithOpenAI(
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS)
   try {
-    const relevanceRule = `The target is ${ticker} (${companyName}). CRITICAL RULE: If ${ticker} or ${companyName} appears in the article title, YOU MUST NEVER REJECT IT. Even if the article is a bait-and-switch pitching a different stock, or only compares ${ticker} or ${companyName} to competitors, it IS relevant. Summarize the market context, comparison, or AI trends mentioned. Only reject when the target appears exclusively in a standard financial disclaimer, advertisement, or unrelated 'Top 10 stocks' footer (for example, 'If you invested $1000 in Nvidia...'), or the source has absolutely no relation to the target. When rejecting, return exactly "${IRRELEVANT_SUMMARY}" with no other text.`
+    const relevanceRule = allowRejection
+      ? `The target is ${ticker} (${companyName}). CRITICAL RULE: If ${ticker} or ${companyName} appears in the article title, YOU MUST NEVER REJECT IT. Even if the article is a bait-and-switch pitching a different stock, or only compares ${ticker} or ${companyName} to competitors, it IS relevant. Summarize the market context, comparison, or AI trends mentioned. Only reject when the target appears exclusively in a standard financial disclaimer, advertisement, or unrelated 'Top 10 stocks' footer (for example, 'If you invested $1000 in Nvidia...'), or the source has absolutely no relation to the target. When rejecting, return exactly "${IRRELEVANT_SUMMARY}" with no other text.`
+      : `The target is ${ticker} (${companyName}). This article has already been verified as relevant because the target appears in its title. NEVER reject it or return "${IRRELEVANT_SUMMARY}". Summarize the market context and comparisons using only the provided source text.`
     const systemPrompt = `${SUMMARY_PROMPT} ${relevanceRule}`
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -323,8 +344,22 @@ Deno.serve(async (request) => {
     if (!article.text) {
       console.info(JSON.stringify({ event: 'news_summary_headline_fallback', reason: article.fallbackReason }))
     }
-    const summary = await summarizeWithOpenAI(article.text ?? '', headline, ticker.toUpperCase(), companyName)
-    if (summary === IRRELEVANT_SUMMARY) {
+    let summary = await summarizeWithOpenAI(article.text ?? '', headline, ticker.toUpperCase(), companyName)
+    if (isTargetMentionedInTitle(headline, ticker.toUpperCase(), companyName) && /\b(?:rejected|irrelevant)\b/i.test(summary)) {
+      try {
+        summary = await summarizeWithOpenAI(article.text ?? '', headline, ticker.toUpperCase(), companyName, false)
+      } catch (error) {
+        console.error(JSON.stringify({
+          event: 'news_summary_title_relevance_retry_failed',
+          code: error instanceof Error ? error.message : 'NEWS_SUMMARY_RETRY_FAILED',
+        }))
+        summary = ''
+      }
+      if (/\b(?:rejected|irrelevant)\b/i.test(summary) || !summary) {
+        summary = `Market context and comparison for ${ticker.toUpperCase()}: ${headline}`
+      }
+    }
+    if (/\b(?:rejected|irrelevant)\b/i.test(summary)) {
       return ok({ rejected: true, summary: IRRELEVANT_SUMMARY }, request)
     }
     const { data: savedArticle, error: cacheError } = await client
