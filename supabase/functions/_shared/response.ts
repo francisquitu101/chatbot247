@@ -1,16 +1,9 @@
 function headersFor(request?: Request): Record<string, string> {
-  const rawAllowedOrigins = Deno.env.get('CORS_ORIGIN') ?? ''
-  const allowedOrigins = rawAllowedOrigins
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean)
-  const origin = request?.headers.get('origin') ?? ''
-  const matchingOrigin = origin && allowedOrigins.includes(origin) ? origin : null
-
   return {
-    ...(matchingOrigin ? { 'Access-Control-Allow-Origin': matchingOrigin, Vary: 'Origin' } : {}),
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, x-notification-service-key, apikey, content-type',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, x-notification-service-key, apikey, content-type, x-supabase-api-version',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    ...(request?.headers.has('origin') ? { Vary: 'Origin' } : {}),
   }
 }
 export function jsonResponse(body: unknown, status = 200, request?: Request): Response {
@@ -20,7 +13,7 @@ export function errorResponse(code: string, message: string, status = 400, reque
   return jsonResponse({ success: false, error: { code, message } }, status, request)
 }
 export function ok(data: unknown, request?: Request): Response { return jsonResponse({ success: true, data }, 200, request) }
-export function handleOptions(request: Request): Response | null { return request.method === 'OPTIONS' ? new Response('ok', { headers: headersFor(request) }) : null }
+export function handleOptions(request: Request): Response | null { return request.method === 'OPTIONS' ? new Response(null, { status: 204, headers: headersFor(request) }) : null }
 export async function readJson(request: Request): Promise<Record<string, unknown> | null> {
   const body: unknown = await request.json().catch(() => null)
   return body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : null
