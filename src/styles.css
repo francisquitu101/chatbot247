@@ -111,6 +111,99 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
 }
 .center-state strong { color: var(--ink); }
 
+.checkout-return {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 15% 15%, rgba(255, 184, 108, 0.16), transparent 32%),
+    linear-gradient(145deg, #101817, #202b28);
+}
+
+.checkout-return-card {
+  width: min(100%, 520px);
+  padding: clamp(28px, 6vw, 48px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 24px;
+  background: rgba(250, 252, 249, 0.97);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+  text-align: center;
+}
+
+.checkout-return-mark {
+  display: grid;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 22px;
+  place-items: center;
+  border-radius: 50%;
+  background: #e7f4eb;
+  color: #25814c;
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.checkout-return-pending .checkout-return-mark {
+  background: #fff3dc;
+  color: #a56316;
+}
+
+.checkout-return-failure .checkout-return-mark {
+  background: #fcebea;
+  color: #b42318;
+}
+
+.checkout-return-eyebrow {
+  margin: 0 0 10px;
+  color: #65716b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+}
+
+.checkout-return-card h1 {
+  margin: 0;
+  color: #1d2924;
+  font-size: clamp(25px, 5vw, 34px);
+  letter-spacing: -0.04em;
+}
+
+.checkout-return-message {
+  margin: 12px 0 0;
+  color: #34433b;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.checkout-return-detail {
+  margin: 12px auto 26px;
+  color: #707b75;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.checkout-return-button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 20px;
+  border: 1px solid rgba(255, 184, 108, 0.5);
+  border-radius: 999px;
+  background: linear-gradient(135deg, #303740, #1e232a);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.checkout-return-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 7px 18px rgba(30, 35, 42, 0.22);
+}
+
 .eyebrow {
   margin: 0 0 12px;
   font-family: 'Inter', 'SF Pro Display', system-ui, sans-serif;
