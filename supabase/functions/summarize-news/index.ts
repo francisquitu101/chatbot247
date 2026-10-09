@@ -235,7 +235,7 @@ async function summarizeWithOpenAI(
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS)
   try {
-    const relevanceRule = `The target is ${ticker} (${companyName}). If ${ticker} is ONLY mentioned in a standard financial disclaimer, advertisement, or 'Top 10 stocks' footer (for example, 'If you invested $1000 in Nvidia...'), you MUST return "${IRRELEVANT_SUMMARY}". Also return exactly "${IRRELEVANT_SUMMARY}" if the source has absolutely no relation to the target. Otherwise treat contextual mentions as relevant. Do not add any other text when rejecting.`
+    const relevanceRule = `The target is ${ticker} (${companyName}). CRITICAL RULE: If ${ticker} or ${companyName} appears in the article title, YOU MUST NEVER REJECT IT. Even if the article is a bait-and-switch pitching a different stock, or only compares ${ticker} or ${companyName} to competitors, it IS relevant. Summarize the market context, comparison, or AI trends mentioned. Only reject when the target appears exclusively in a standard financial disclaimer, advertisement, or unrelated 'Top 10 stocks' footer (for example, 'If you invested $1000 in Nvidia...'), or the source has absolutely no relation to the target. When rejecting, return exactly "${IRRELEVANT_SUMMARY}" with no other text.`
     const systemPrompt = `${SUMMARY_PROMPT} ${relevanceRule}`
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
