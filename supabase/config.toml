@@ -442,3 +442,8 @@ entrypoint = "./functions/create-checkout/index.ts"
 enabled = true
 verify_jwt = true
 entrypoint = "./functions/capture-paypal-order/index.ts"
+
+[functions.stock-chart]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/stock-chart/index.ts"

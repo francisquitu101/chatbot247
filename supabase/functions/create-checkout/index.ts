@@ -5,8 +5,8 @@ import {
 import { errorResponse, handleOptions, ok } from "../_shared/response.ts";
 import { getPayPalAccessToken, getPayPalApiUrl } from "../_shared/paypal.ts";
 
-const CHECKOUT_AMOUNT = "49.90";
-const CHECKOUT_TITLE = "MarketMole Pro - Lifetime Access";
+const CHECKOUT_AMOUNT = "6.90";
+const CHECKOUT_TITLE = "MarketMole Pro - 10 Tickers Watchlist & Advanced Charts";
 const PAYPAL_TIMEOUT_MS = 15_000;
 
 type PayPalOrder = {

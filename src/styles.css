@@ -214,6 +214,16 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   color: var(--green);
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
 .page-heading h1,
 .auth-panel h1,
 .landing-page h1,
@@ -621,6 +631,170 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
 
 .luna-mini-divider {
   color: var(--muted);
+}
+
+.luna-watchlist {
+  position: relative;
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  border-bottom: 1px solid rgba(19, 33, 39, 0.06);
+  background: #f8faf9;
+  flex-shrink: 0;
+}
+
+.luna-watchlist-tickers {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.luna-watchlist-ticker {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid #dce5e0;
+  border-radius: 999px;
+  background: #fff;
+  color: #596962;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.luna-watchlist-ticker.active {
+  border-color: #a8d1bb;
+  background: #eaf6ef;
+  color: #176640;
+}
+
+.luna-watchlist-form {
+  display: flex;
+  flex: 0 0 124px;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 3px;
+  border: 1px solid #dce5e0;
+  border-radius: 999px;
+  background: #fff;
+}
+
+.luna-watchlist-form input {
+  width: 78px;
+  min-width: 0;
+  padding: 3px 7px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 10px;
+}
+
+.luna-watchlist-form button {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  flex: 0 0 25px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: #26332e;
+  color: #fff;
+}
+
+.luna-watchlist-count {
+  color: #79867f;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.luna-watchlist-message {
+  position: absolute;
+  z-index: 3;
+  top: 100%;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 32px);
+  padding: 8px 11px;
+  border: 1px solid #f0d1a9;
+  border-radius: 9px;
+  background: #fffaf2;
+  box-shadow: 0 7px 22px rgba(20, 31, 26, 0.12);
+  color: #725024;
+  font-size: 10px;
+}
+
+.luna-watchlist-message button {
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 999px;
+  background: #28342f;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.luna-price-chart {
+  position: relative;
+  flex: 0 0 230px;
+  min-height: 230px;
+  padding: 12px 16px 4px;
+  border-bottom: 1px solid rgba(19, 33, 39, 0.07);
+  background: #fff;
+}
+
+.luna-price-chart-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.luna-price-chart-heading p {
+  margin: 0 0 3px;
+  color: #8a9690;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 8px;
+  letter-spacing: 0.11em;
+}
+
+.luna-price-chart-heading h2 {
+  margin: 0;
+  color: #27352f;
+  font-size: 13px;
+  letter-spacing: -0.02em;
+}
+
+.luna-price-chart-heading > span {
+  margin-top: 3px;
+  color: #8a9690;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
+.luna-price-chart-canvas {
+  width: 100%;
+  height: 180px;
+}
+
+.luna-chart-state {
+  display: grid;
+  height: 180px;
+  place-items: center;
+  color: #79867f;
+  font-size: 11px;
+}
+
+.luna-chart-error {
+  color: #8a5b3a;
 }
 
 .luna-mini-status,
@@ -2263,6 +2437,16 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
     min-height: 34px;
     padding: 0 10px;
     font-size: 10px;
+  }
+
+  .luna-price-chart {
+    flex-basis: 210px;
+    min-height: 210px;
+  }
+
+  .luna-price-chart-canvas,
+  .luna-chart-state {
+    height: 160px;
   }
 }
 

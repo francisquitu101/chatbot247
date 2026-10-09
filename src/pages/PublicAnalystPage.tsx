@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { ArrowRight, Brain, ChartColumnIncreasing, Chrome, Crown, Download, ExternalLink, FileText, FolderOpen, LogOut, Newspaper, RefreshCw, Star } from 'lucide-react'
+import { ArrowRight, Brain, ChartColumnIncreasing, Chrome, Crown, Download, ExternalLink, FileText, FolderOpen, LogOut, Newspaper, Plus, RefreshCw, Star } from 'lucide-react'
 import { Navbar } from '../components/Navbar'
+import { PriceChart } from '../components/PriceChart'
 import { TerminalLoader } from '../components/TerminalLoader'
 import { getPrivateAnalystByTicker, getPublicAnalystByTicker } from '../lib/analystData'
 import { getFinvizCompanyActivity, getFinvizCompanyNews, getLatestTerminalActivity, type TerminalActivityEvent } from '../lib/queries/company'
@@ -223,9 +224,55 @@ export function AnalystExperienceDisplay({
   const [terminalActivity, setTerminalActivity] = useState<TerminalActivityEvent[]>([])
   const [terminalActivityErrors, setTerminalActivityErrors] = useState<string[]>([])
   const [terminalIdleIndex, setTerminalIdleIndex] = useState(0)
+  const [watchlist, setWatchlist] = useState<string[]>([(ticker ?? 'NVDA').toUpperCase()])
+  const [watchlistInput, setWatchlistInput] = useState('')
+  const [watchlistMessage, setWatchlistMessage] = useState<string | null>(null)
+  const [watchlistOwner, setWatchlistOwner] = useState<string | null>(null)
 
-  const activeTicker = useMemo(() => (ticker ?? 'NVDA').toUpperCase(), [ticker])
+  const [activeTicker, setActiveTicker] = useState((ticker ?? 'NVDA').toUpperCase())
   const sessionUserId = session?.user.id ?? null
+  const watchlistStorageKey = sessionUserId ? `marketmole-watchlist:${sessionUserId}` : 'marketmole-watchlist:guest'
+
+  useEffect(() => {
+    const nextTicker = (ticker ?? 'NVDA').trim().toUpperCase()
+    setActiveTicker(nextTicker)
+  }, [ticker])
+
+  useEffect(() => {
+    let nextWatchlist: string[] = [(ticker ?? 'NVDA').trim().toUpperCase()]
+    try {
+      const storedValue: unknown = JSON.parse(localStorage.getItem(watchlistStorageKey) ?? 'null')
+      if (Array.isArray(storedValue)) {
+        const validTickers = storedValue
+          .filter((value): value is string => typeof value === 'string')
+          .map((value) => value.trim().toUpperCase())
+          .filter((value) => /^[A-Z0-9.^=-]{1,20}$/.test(value))
+        if (validTickers.length > 0) nextWatchlist = [...new Set(validTickers)].slice(0, 10)
+      }
+    } catch {
+      setWatchlistMessage('Could not load your saved watchlist.')
+    }
+    setWatchlist(nextWatchlist)
+    setActiveTicker((current) => nextWatchlist.includes(current) ? current : nextWatchlist[0])
+    setWatchlistOwner(watchlistStorageKey)
+  }, [watchlistStorageKey, ticker])
+
+  useEffect(() => {
+    if (watchlistOwner !== watchlistStorageKey) return
+    try {
+      localStorage.setItem(watchlistStorageKey, JSON.stringify(watchlist))
+    } catch {
+      setWatchlistMessage('Could not save your watchlist in this browser.')
+    }
+  }, [watchlist, watchlistOwner, watchlistStorageKey])
+
+  useEffect(() => {
+    if ((!session || isPro === false) && watchlist.length > 1) {
+      const reducedWatchlist = [activeTicker]
+      setWatchlist(reducedWatchlist)
+      setWatchlistOwner(watchlistStorageKey)
+    }
+  }, [activeTicker, isPro, session, watchlist, watchlistStorageKey])
 
   useEffect(() => {
     if (!sessionUserId || !supabase) {
@@ -296,6 +343,37 @@ export function AnalystExperienceDisplay({
       setCheckoutError(getErrorMessage(error, 'Unable to start checkout. Please try again.'))
       setCheckoutBusy(false)
     }
+  }
+
+  function handleWatchlistSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const nextTicker = watchlistInput.trim().toUpperCase()
+    if (!/^[A-Z0-9.^=-]{1,20}$/.test(nextTicker)) {
+      setWatchlistMessage('Enter a valid stock ticker.')
+      return
+    }
+    if (watchlist.includes(nextTicker)) {
+      setWatchlistMessage(`${nextTicker} is already in your watchlist.`)
+      return
+    }
+    const limit = session && isPro === true ? 10 : 1
+    if (watchlist.length >= limit) {
+      setWatchlistMessage(limit === 1
+        ? 'Upgrade to Pro to add up to 10 tickers.'
+        : 'Your Pro watchlist supports up to 10 tickers.')
+      return
+    }
+    setWatchlist((current) => [...current, nextTicker])
+    setWatchlistInput('')
+    setWatchlistMessage(null)
+  }
+
+  function handleWatchlistUpgrade() {
+    if (session) {
+      if (isPro !== true) void handleUpgradeToPro()
+      return
+    }
+    void handleGoogleSignIn()
   }
 
   async function handleSummarizeNews(articleId: string, articleUrl: string | null, articleTitle: string) {
@@ -583,6 +661,50 @@ export function AnalystExperienceDisplay({
     }
   }, [activeApp])
 
+  const watchlistPanel = (
+    <section className="luna-watchlist" aria-label="Ticker watchlist">
+      <div className="luna-watchlist-tickers">
+        {watchlist.map((watchlistTicker) => (
+          <button
+            key={watchlistTicker}
+            type="button"
+            className={`luna-watchlist-ticker ${watchlistTicker === activeTicker ? 'active' : ''}`}
+            onClick={() => {
+              setActiveTicker(watchlistTicker)
+              setWatchlistMessage(null)
+            }}
+            aria-pressed={watchlistTicker === activeTicker}
+          >
+            {watchlistTicker}
+          </button>
+        ))}
+      </div>
+      <form className="luna-watchlist-form" onSubmit={handleWatchlistSubmit}>
+        <label className="sr-only" htmlFor="watchlist-ticker-input">Add ticker to watchlist</label>
+        <input
+          id="watchlist-ticker-input"
+          value={watchlistInput}
+          onChange={(event) => setWatchlistInput(event.target.value)}
+          placeholder="Add ticker"
+          maxLength={20}
+          autoComplete="off"
+        />
+        <button type="submit" aria-label="Add ticker" title="Add ticker"><Plus size={16} /></button>
+      </form>
+      <span className="luna-watchlist-count">{watchlist.length}/{session && isPro === true ? 10 : 1} TICKERS</span>
+      {watchlistMessage && (
+        <div className="luna-watchlist-message" role="status">
+          <span>{watchlistMessage}</span>
+          {watchlistMessage.startsWith('Upgrade to Pro') && (
+            <button type="button" onClick={handleWatchlistUpgrade} disabled={checkoutBusy}>
+              {session ? 'Upgrade to Pro' : 'Sign in to upgrade'}
+            </button>
+          )}
+        </div>
+      )}
+    </section>
+  )
+
   if (loading) {
     return <TerminalLoader message="Loading analyst evidence and thesis history..." />
   }
@@ -593,11 +715,18 @@ export function AnalystExperienceDisplay({
 
   if (!data || !data.analyst) {
     return (
-      <div className="research-terminal research-terminal-empty">
-        <div className="terminal-empty-shell">
-          <span className="terminal-kicker">ANALYST NOT INITIALIZED</span>
-          <h1>{activeTicker}</h1>
-          <p>No analyst state is currently available for this company.</p>
+      <div className="luna-chat-shell">
+        <Navbar />
+        <div className="luna-desktop-windows">
+          <section className="luna-window luna-analysis-window luna-chart-only-window" aria-label={`${activeTicker} market view`}>
+            <div className="luna-titlebar"><span className="luna-titlebar-label">MarketMole · {activeTicker}</span></div>
+            {watchlistPanel}
+            <PriceChart ticker={activeTicker} />
+            <div className="luna-placeholder-state">
+              <strong>Analyst not initialized for {activeTicker}</strong>
+              <span>Price history is available above. Market research will appear when an analyst is available.</span>
+            </div>
+          </section>
         </div>
       </div>
     )
@@ -687,6 +816,9 @@ export function AnalystExperienceDisplay({
         </header>
 
         {authError && <div className="luna-auth-error">{authError}</div>}
+
+        {watchlistPanel}
+        <PriceChart ticker={activeTicker} />
 
         {activeApp === 'sec' && (
           <main className="luna-data-view luna-sec-explorer">
