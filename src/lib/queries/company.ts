@@ -105,7 +105,7 @@ export async function getLatestTerminalActivity(
   ticker: string,
   analystId: string,
 ): Promise<TerminalActivityResult> {
-  const [insiderResult, newsResult, runResult, filingResult] = await Promise.allSettled([
+  const [insiderResult, newsResult, filingResult, ratingResult] = await Promise.allSettled([
     client.from('finviz_insider_trades')
       .select('id, insider_name, transaction, transaction_date, scraped_at')
       .eq('ticker', ticker.toUpperCase())
@@ -113,19 +113,18 @@ export async function getLatestTerminalActivity(
       .limit(1)
       .maybeSingle(),
     getFinvizCompanyNews(client, ticker),
-    client.from('analyst_runs')
-      .select('id, status, completed_at, started_at, created_at')
-      .eq('analyst_id', analystId)
-      .eq('status', 'completed')
-      .order('completed_at', { ascending: false, nullsFirst: false })
-      .limit(1)
-      .maybeSingle(),
     client.from('analyst_evidence')
       .select('evidence_items!inner(id, title, published_at, source_type)')
       .eq('analyst_id', analystId)
       .eq('evidence_items.source_type', 'SEC')
       .order('published_at', { referencedTable: 'evidence_items', ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    client.from('finviz_analyst_ratings')
+      .select('id, analyst, action, rating_change, price_target_change, rating_date')
+      .eq('ticker', ticker.toUpperCase())
+      .order('rating_date', { ascending: false, nullsFirst: false })
       .limit(1)
       .maybeSingle(),
   ])
@@ -185,20 +184,22 @@ export async function getLatestTerminalActivity(
     errors.push(`SEC filings: ${message}`)
   }
 
-  if (runResult.status === 'fulfilled' && !runResult.value.error) {
-    const run = runResult.value.data
-    if (run) {
+  if (ratingResult.status === 'fulfilled' && !ratingResult.value.error) {
+    const rating = ratingResult.value.data
+    if (rating) {
+      const details = [rating.action, rating.rating_change, rating.price_target_change]
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
       events.push({
-        id: `run-${run.id}`,
-        timestamp: run.completed_at ?? run.started_at ?? run.created_at,
-        message: '🧠 SEC analysis complete. [OK]',
+        id: `rating-${rating.id}`,
+        timestamp: rating.rating_date,
+        message: `📊 Analyst update${rating.analyst ? ` from ${rating.analyst}` : ''}${details.length > 0 ? `: ${details.join(' · ')}` : ''}`,
       })
     }
   } else {
-    const message = runResult.status === 'rejected'
-      ? getQueryErrorMessage(runResult.reason)
-      : getQueryErrorMessage(runResult.value.error)
-    errors.push(`Analysis runs: ${message}`)
+    const message = ratingResult.status === 'rejected'
+      ? getQueryErrorMessage(ratingResult.reason)
+      : getQueryErrorMessage(ratingResult.value.error)
+    errors.push(`Analyst ratings: ${message}`)
   }
 
   events.sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime())
@@ -214,7 +215,7 @@ function getQueryErrorMessage(error: unknown): string {
       .join(' ')
       .toLowerCase()
     if (code === '42883' || code === 'PGRST202' || text.includes('get_public_finviz_news')) {
-      return 'Apply Supabase migration 20261008170700_allow_public_finviz_news.sql.'
+      return 'Apply Supabase migration 20261009160000_cache_news_briefs_and_multisource_terminal.sql.'
     }
   }
   if (error instanceof Error) return error.message

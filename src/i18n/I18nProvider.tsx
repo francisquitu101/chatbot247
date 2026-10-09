@@ -3,6 +3,7 @@ import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import { translations, translate, type Language } from './translations'
 import { I18nContext } from './I18nContext'
+import { TerminalLoader } from '../components/TerminalLoader'
 
 export function I18nProvider({ session, children }: { session: Session; children: ReactNode }) {
   const [language, setLanguageState] = useState<Language | null>(null)
@@ -48,7 +49,7 @@ export function I18nProvider({ session, children }: { session: Session; children
 
   const value = useMemo(() => ({ language: language ?? 'en', t: (key: Parameters<typeof translate>[1]) => translate(language ?? 'en', key), setLanguage }), [language, setLanguage])
 
-  if (loading) return <div className="center-state"><strong>{translations.en.authenticating}</strong><span>{translations.en.loadingPreferences}</span></div>
+  if (loading) return <TerminalLoader message={translations.en.loadingPreferences} />
   if (!language) return <LanguageSetup saving={saving} onSelect={setLanguage} />
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
 }

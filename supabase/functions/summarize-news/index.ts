@@ -1,5 +1,6 @@
 import { load } from 'https://esm.sh/cheerio@1.0.0'
 import { errorResponse, handleOptions, ok, readJson } from '../_shared/response.ts'
+import { createBackendClient } from '../_shared/supabase.ts'
 
 const MAX_ARTICLE_BYTES = 1_000_000
 const MAX_ARTICLE_TEXT_LENGTH = 40_000
@@ -8,6 +9,7 @@ const ARTICLE_TIMEOUT_MS = 15_000
 const SEARCH_TIMEOUT_MS = 10_000
 const OPENAI_TIMEOUT_MS = 30_000
 const SUMMARY_PROMPT = 'You are an elite equity research analyst. Generate a concise 2-3 sentence executive brief based on the provided text. CRITICAL: You MUST extract and include specific financial metrics, percentages, revenue figures, stock ticker movements, and concrete numbers mentioned in the text. Do not provide a vague summary; anchor your analysis in the hard data provided. Focus on the impact on the company or market.'
+const IRRELEVANT_SUMMARY = 'REJECTED: Irrelevant to ticker.'
 const BLOCKED_PAGE_PATTERN = /\b(?:captcha|enable javascript|cloudflare|are you a robot|verify (?:that )?you are human|access denied|checking your browser|automated requests)\b/i
 const SCRAPER_USER_AGENT = 'MarketMoleNewsBrief/1.0'
 
@@ -178,18 +180,23 @@ async function fetchGoogleNewsRssSnippets(title: string, ticker: string): Promis
   }
 }
 
-async function summarizeWithOpenAI(articleText: string, headline: string | null, snippets: string[]): Promise<string> {
+async function summarizeWithOpenAI(
+  articleText: string,
+  headline: string | null,
+  snippets: string[],
+  ticker: string,
+  companyName: string,
+): Promise<string> {
   const apiKey = Deno.env.get('OPENAI_API_KEY')
   if (!apiKey) throw new Error('OPENAI_API_KEY_NOT_CONFIGURED')
 
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS)
   try {
-    const systemPrompt = articleText
-      ? SUMMARY_PROMPT
-      : snippets.length > 0
-        ? SUMMARY_PROMPT
-        : 'You are a financial analyst. We could not extract the full article due to paywalls. Based ONLY on the headline provided in the user message, generate a 1-2 sentence brief on what this likely implies for the market or the company. Acknowledge this is based on the headline.'
+    const relevanceRule = `The target is ${ticker} (${companyName}). If the article is not primarily about ${ticker} or ${companyName}, return EXACTLY: "${IRRELEVANT_SUMMARY}" Do not add any other text.`
+    const systemPrompt = articleText || snippets.length > 0
+      ? `${SUMMARY_PROMPT} ${relevanceRule}`
+      : `You are a financial analyst. We could not extract the full article due to paywalls. Based ONLY on the headline provided in the user message, generate a 1-2 sentence brief on what this likely implies for the market or the company. Acknowledge this is based on the headline. ${relevanceRule}`
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -242,9 +249,35 @@ Deno.serve(async (request) => {
       return errorResponse('INVALID_REQUEST', 'A valid article URL is required.', 400, request)
     }
     const title = typeof body.title === 'string' ? body.title.trim().slice(0, 500) : ''
-    const headline = title.length > 0 ? title : null
     const ticker = typeof body.ticker === 'string' ? body.ticker.trim().slice(0, 15) : ''
+    const articleId = typeof body.article_id === 'string' ? body.article_id : ''
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(articleId) || !ticker) {
+      return errorResponse('INVALID_REQUEST', 'A valid article ID and ticker are required.', 400, request)
+    }
     const articleUrl = validateArticleUrl(body.url)
+    const client = createBackendClient()
+    const { data: articleRecord, error: articleLookupError } = await client
+      .from('scraped_items')
+      .select('id, ticker, title, url, ai_summary')
+      .eq('id', articleId)
+      .eq('ticker', ticker.toUpperCase())
+      .maybeSingle()
+    if (articleLookupError) throw new Error('ARTICLE_LOOKUP_FAILED')
+    if (!articleRecord) return errorResponse('ARTICLE_NOT_FOUND', 'The requested article is unavailable.', 404, request)
+    if (new URL(articleRecord.url).toString() !== articleUrl.toString()) {
+      return errorResponse('ARTICLE_NOT_FOUND', 'The requested article is unavailable.', 404, request)
+    }
+    const cachedSummary = typeof articleRecord.ai_summary === 'string' ? articleRecord.ai_summary.trim() : ''
+    if (cachedSummary) return ok({ summary: cachedSummary, source: 'cache', cached: true }, request)
+
+    const headline = (articleRecord.title?.trim() || title).slice(0, 500) || null
+    const { data: trackedStock, error: companyLookupError } = await client
+      .from('tracked_stocks')
+      .select('company_name')
+      .eq('ticker', ticker.toUpperCase())
+      .maybeSingle()
+    if (companyLookupError) throw new Error('COMPANY_LOOKUP_FAILED')
+    const companyName = trackedStock?.company_name?.trim() || ticker.toUpperCase()
     const article = await fetchArticle(articleUrl)
     if (!article.text && !headline) {
       return errorResponse('ARTICLE_CONTENT_UNAVAILABLE', 'Could not read article content and no headline was provided.', 422, request)
@@ -261,8 +294,23 @@ Deno.serve(async (request) => {
     } else if (!article.text) {
       console.info(JSON.stringify({ event: 'news_summary_snippet_fallback', reason: article.fallbackReason }))
     }
-    const summary = await summarizeWithOpenAI(article.text ?? '', headline, snippets)
-    return ok({ summary, source: article.text ? 'article' : snippets.length > 0 ? 'search_snippets' : 'headline' }, request)
+    const summary = await summarizeWithOpenAI(article.text ?? '', headline, snippets, ticker.toUpperCase(), companyName)
+    if (summary === IRRELEVANT_SUMMARY) {
+      return ok({ rejected: true, summary: IRRELEVANT_SUMMARY }, request)
+    }
+    const { data: savedArticle, error: cacheError } = await client
+      .from('scraped_items')
+      .update({ ai_summary: summary })
+      .eq('id', articleId)
+      .eq('ticker', ticker.toUpperCase())
+      .select('id')
+      .maybeSingle()
+    if (cacheError || !savedArticle) throw new Error('SUMMARY_CACHE_SAVE_FAILED')
+    return ok({
+      summary,
+      source: article.text ? 'article' : snippets.length > 0 ? 'search_snippets' : 'headline',
+      cached: false,
+    }, request)
   } catch (error) {
     const code = error instanceof Error ? error.message : 'NEWS_SUMMARY_FAILED'
     const status = code === 'INVALID_ARTICLE_URL' ? 400 : code === 'OPENAI_API_KEY_NOT_CONFIGURED' ? 500 : 502

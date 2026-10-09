@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { ensureUserProfile } from './lib/auth'
 import { supabase } from './lib/supabase'
+import { TerminalLoader } from './components/TerminalLoader'
 import { PublicAnalystPage } from './pages/PublicAnalystPage'
 
 function routeFromLocation() {
@@ -64,7 +65,7 @@ function App() {
   }, [])
 
   if (authLoading) {
-    return <div className="center-state"><strong>Preparing MarketMole...</strong></div>
+    return <TerminalLoader message="Preparing MarketMole..." />
   }
 
   if (!supabase) {
