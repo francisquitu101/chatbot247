@@ -194,7 +194,7 @@ async function runFinviz(ticker: string) {
 
     const errors = [newsError, ratingsError, insiderTradesError, marketSnapshotError].filter(Boolean)
     const status = errors.length === 0 ? 'ok' : errors.length === 4 ? 'error' : 'partial'
-    return { ok: errors.length === 0, status, found: scrape.news.length, ...newsPersistence, newsFound: scrape.news.length, ratingsFound: scrape.analystRatings.length, insiderTradesFound: scrape.insiderTrades.length, marketSnapshotNew: marketSnapshotPersistence.new, newsNew: newsPersistence.new, ratingsNew: ratingsPersistence.new, insiderTradesNew: insiderPersistence.new, ratingsDuplicate: ratingsPersistence.duplicate, insiderTradesDuplicate: insiderPersistence.duplicate, newsError, ratingsError, insiderTradesError, marketSnapshotError }
+    return { ok: errors.length === 0, status, found: scrape.news.length, ...newsPersistence, newsFound: scrape.news.length, newsSource: scrape.newsSource, newsSourceError: scrape.newsSourceError, ratingsFound: scrape.analystRatings.length, insiderTradesFound: scrape.insiderTrades.length, marketSnapshotNew: marketSnapshotPersistence.new, newsNew: newsPersistence.new, ratingsNew: ratingsPersistence.new, insiderTradesNew: insiderPersistence.new, ratingsDuplicate: ratingsPersistence.duplicate, insiderTradesDuplicate: insiderPersistence.duplicate, newsError, ratingsError, insiderTradesError, marketSnapshotError }
   } catch (error) {
     return { ok: false, status: 'error', error: error instanceof Error ? error.message : 'unknown error' }
   }

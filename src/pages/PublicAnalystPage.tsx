@@ -195,7 +195,7 @@ export function AnalystExperienceDisplay({
       const { data: result, error: invocationError } = await supabase.functions.invoke<{
         success: boolean
         data?: { summary?: string }
-      }>('summarize-news', { body: { url: articleUrl, title: articleTitle } })
+      }>('summarize-news', { body: { url: articleUrl, title: articleTitle, ticker: activeTicker } })
       if (invocationError) throw invocationError
       const summary = result?.success === true && typeof result.data?.summary === 'string'
         ? result.data.summary.trim()
@@ -731,18 +731,27 @@ export function AnalystExperienceDisplay({
                               ? 'Retry summary'
                               : 'Summarize'}
                       </button>
-                      <p
-                        className="luna-news-brief"
+                      <div
+                        className={`luna-news-brief${briefing?.status === 'loading' ? ' luna-news-brief-loading' : ''}`}
                         id={`news-brief-${item.id}`}
                         role="status"
+                        aria-live="polite"
                         hidden={briefingArticleId !== item.id}
                       >
-                        {briefing?.status === 'success'
+                        {briefing?.status === 'loading' ? (
+                          <span className="luna-news-brief-progress">
+                            <svg className="luna-news-brief-spinner" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4z" />
+                            </svg>
+                            <span>Analizando artículo y extrayendo métricas clave...</span>
+                          </span>
+                        ) : briefing?.status === 'success'
                           ? briefing.summary
                           : briefing?.status === 'error'
                             ? '[Error: Unable to extract article content]'
-                            : '[MarketMole Agent is extracting and summarizing...]'}
-                      </p>
+                            : null}
+                      </div>
                       {articleUrl && (
                         <a href={articleUrl} target="_blank" rel="noreferrer">
                           Read original article <ExternalLink size={13} aria-hidden="true" />

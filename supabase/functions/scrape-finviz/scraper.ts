@@ -1,4 +1,4 @@
-import { createFirecrawlClient, type FirecrawlDocument } from '../_shared/firecrawl.ts'
+import { load } from 'https://esm.sh/cheerio@1.0.0'
 import { generateContentHash, generateIdentityHash } from '../_shared/hash.ts'
 import { resolveSourceId } from '../_shared/repository.ts'
 import { normalizeTicker } from '../_shared/scraper.ts'
@@ -8,6 +8,8 @@ const FINVIZ_URL = 'https://finviz.com/quote.ashx?t='
 const FINVIZ_FILINGS_URL = 'https://finviz.com/stock?t='
 const FINVIZ_TIME_ZONE = 'America/New_York'
 const KURA_DIRECT_FETCH_TIMEOUT_MS = 10_000
+const GOOGLE_NEWS_RSS_TIMEOUT_MS = 12_000
+const GOOGLE_NEWS_RSS_MAX_BYTES = 1_000_000
 
 export type FinvizAnalystRatingDraft = {
   ticker: string
@@ -61,6 +63,8 @@ export type FinvizMarketSnapshotDraft = {
 
 export type FinvizScrapeResult = {
   news: ScrapedItemDraft[]
+  newsSource: 'yahoo_finance_rss' | 'bing_news_rss' | 'google_news_rss' | 'finviz_direct' | 'none'
+  newsSourceError: string | null
   analystRatings: FinvizAnalystRatingDraft[]
   insiderTrades: FinvizInsiderTradeDraft[]
   filings: FinvizFilingDraft[]
@@ -577,7 +581,7 @@ function extractProviderFromCell(cellHtml: string): string | null {
   return null
 }
 
-function extractNews(document: FirecrawlDocument, ticker: string, sourceId: string, baseUrl: string): ScrapedItemDraft[] {
+function extractNews(document: { html?: string | null; markdown?: string | null }, ticker: string, sourceId: string, baseUrl: string): ScrapedItemDraft[] {
   const html = document.html ?? document.markdown ?? ''
   if (!html || html.trim().length === 0) return []
 
@@ -660,6 +664,142 @@ function extractNews(document: FirecrawlDocument, ticker: string, sourceId: stri
   return items
 }
 
+async function scrapeRssFeed(
+  feed: { source: 'yahoo_finance_rss' | 'bing_news_rss' | 'google_news_rss'; provider: string; url: URL },
+  ticker: string,
+  sourceId: string,
+): Promise<{ items: ScrapedItemDraft[]; error: string | null }> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), GOOGLE_NEWS_RSS_TIMEOUT_MS)
+
+  try {
+    const response = await fetch(feed.url, {
+      headers: {
+        Accept: 'application/rss+xml,application/xml,text/xml;q=0.9,*/*;q=0.8',
+        'User-Agent': 'MarketMoleNewsIngestion/1.0',
+      },
+      signal: controller.signal,
+    })
+    if (!response.ok) return { items: [], error: `http_${response.status}` }
+    const contentLength = Number(response.headers.get('content-length'))
+    if (Number.isFinite(contentLength) && contentLength > GOOGLE_NEWS_RSS_MAX_BYTES) {
+      return { items: [], error: 'rss_response_too_large' }
+    }
+
+    const reader = response.body?.getReader()
+    if (!reader) return { items: [], error: 'empty_rss_response' }
+    const chunks: Uint8Array[] = []
+    let byteLength = 0
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      byteLength += value.byteLength
+      if (byteLength > GOOGLE_NEWS_RSS_MAX_BYTES) {
+        await reader.cancel()
+        return { items: [], error: 'rss_response_too_large' }
+      }
+      chunks.push(value)
+    }
+
+    const bytes = new Uint8Array(byteLength)
+    let offset = 0
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset)
+      offset += chunk.byteLength
+    }
+    const $ = load(new TextDecoder().decode(bytes), { xmlMode: true })
+    const scrapedAt = new Date().toISOString()
+    const items: ScrapedItemDraft[] = []
+    for (const entry of $('item').toArray().slice(0, 30)) {
+      const rssItem = $(entry)
+      const title = rssItem.find('title').first().text().replace(/\s+/g, ' ').trim()
+      const link = rssItem.find('link').first().text().trim()
+      const descriptionHtml = rssItem.find('description').first().text()
+      const content = load(descriptionHtml).text().replace(/\s+/g, ' ').trim().slice(0, 2_000)
+      const publisher = rssItem.find('source').first().text().replace(/\s+/g, ' ').trim() || feed.provider
+      if (!title || !link) continue
+
+      let url: URL
+      try {
+        url = new URL(link)
+      } catch {
+        continue
+      }
+      if (url.protocol !== 'https:') continue
+
+      const publishedAtText = rssItem.find('pubDate').first().text().trim()
+      const publishedAtDate = publishedAtText ? new Date(publishedAtText) : null
+      const publishedAt = publishedAtDate && Number.isFinite(publishedAtDate.getTime())
+        ? publishedAtDate.toISOString()
+        : null
+      const item: ScrapedItemDraft = {
+        source_id: sourceId,
+        ticker,
+        item_type: 'news',
+        title,
+        content: content || null,
+        author: publisher || null,
+        url: url.toString(),
+        published_at: publishedAt,
+        scraped_at: scrapedAt,
+        content_hash: '',
+        metadata: {
+          extractor: feed.source,
+          provider: publisher,
+          raw_timestamp: publishedAtText || null,
+        },
+      }
+      item.content_hash = await generateContentHash({
+        source: 'finviz',
+        ticker: item.ticker,
+        title: item.title,
+        content: item.content,
+        url: item.url,
+      })
+      items.push(item)
+    }
+    return { items, error: items.length > 0 ? null : 'no_rss_items' }
+  } catch (error) {
+    return {
+      items: [],
+      error: error instanceof DOMException && error.name === 'AbortError' ? 'rss_timeout' : 'rss_fetch_failed',
+    }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+async function scrapeRssNews(ticker: string, sourceId: string): Promise<{
+  items: ScrapedItemDraft[]
+  source: FinvizScrapeResult['newsSource']
+  error: string | null
+}> {
+  const yahooUrl = new URL('https://finance.yahoo.com/rss/headline')
+  yahooUrl.searchParams.set('s', ticker)
+  const bingUrl = new URL('https://www.bing.com/news/search')
+  bingUrl.searchParams.set('q', `${ticker} stock`)
+  bingUrl.searchParams.set('format', 'RSS')
+  const googleUrl = new URL('https://news.google.com/rss/search')
+  googleUrl.searchParams.set('q', `${ticker} stock`)
+  googleUrl.searchParams.set('hl', 'en-US')
+  googleUrl.searchParams.set('gl', 'US')
+  googleUrl.searchParams.set('ceid', 'US:en')
+  const feeds = [
+    { source: 'yahoo_finance_rss', provider: 'Yahoo Finance', url: yahooUrl },
+    { source: 'bing_news_rss', provider: 'Bing News', url: bingUrl },
+    { source: 'google_news_rss', provider: 'Google News', url: googleUrl },
+  ] as const
+  const errors: string[] = []
+
+  for (const feed of feeds) {
+    const result = await scrapeRssFeed(feed, ticker, sourceId)
+    if (result.items.length > 0) return { items: result.items, source: feed.source, error: null }
+    errors.push(`${feed.provider}:${result.error ?? 'no_items'}`)
+  }
+
+  return { items: [], source: 'none', error: errors.join(',') }
+}
+
 async function scrapeFinvizDetailed({ ticker }: { ticker: string }): Promise<FinvizScrapeResult> {
     const sourceId = await resolveSourceId('finviz')
     const requestedTicker = normalizeTicker(ticker) ?? ticker.toUpperCase()
@@ -671,6 +811,7 @@ async function scrapeFinvizDetailed({ ticker }: { ticker: string }): Promise<Fin
     let directStatus: number | null = null
     let directRows = 0
     let directSucceeded = false
+    let directFetchError: string | null = null
 
     try {
       const controller = new AbortController()
@@ -705,19 +846,26 @@ async function scrapeFinvizDetailed({ ticker }: { ticker: string }): Promise<Fin
         items = extractNews({ html: normalizedHtml }, requestedTicker, sourceId, response.url)
         directSucceeded = items.length > 0
       }
-    } catch {
+    } catch (error) {
       directSucceeded = false
+      directFetchError = error instanceof Error ? error.message : 'unknown error'
     }
 
-    if (directSucceeded) {
-      console.info(JSON.stringify({ event: 'finviz_transport', ticker: requestedTicker, method: 'direct', status: directStatus, rows: directRows, items: items.length, durationMs: Date.now() - startedAt }))
-    } else {
-      const document = await createFirecrawlClient().scrape(finvizUrl)
-      pageHtml = document.html ?? document.markdown ?? ''
-      pageBaseUrl = finvizUrl
-      items = extractNews({ html: pageHtml }, requestedTicker, sourceId, pageBaseUrl)
-      console.info(JSON.stringify({ event: 'finviz_transport', ticker: requestedTicker, method: 'firecrawl', reason: 'direct_fetch_failed', items: items.length, durationMs: Date.now() - startedAt }))
-    }
+    const directNews = directSucceeded ? items : extractNews({ html: pageHtml }, requestedTicker, sourceId, pageBaseUrl)
+    const rssNews = await scrapeRssNews(requestedTicker, sourceId)
+    items = rssNews.items.length > 0 ? rssNews.items : directNews
+    console.info(JSON.stringify({
+      event: 'news_transport',
+      ticker: requestedTicker,
+      method: rssNews.items.length > 0 ? 'google_news_rss' : directNews.length > 0 ? 'finviz_direct' : 'none',
+      rssItems: rssNews.items.length,
+      rssError: rssNews.error,
+      finvizStatus: directStatus,
+      finvizError: directFetchError,
+      finvizRows: directRows,
+      items: items.length,
+      durationMs: Date.now() - startedAt,
+    }))
 
     const dedupedItems = dedupeFinvizItems(items)
     for (const item of dedupedItems) {
@@ -753,7 +901,15 @@ async function scrapeFinvizDetailed({ ticker }: { ticker: string }): Promise<Fin
       filings = []
     }
 
-    return { news: dedupedItems, analystRatings, insiderTrades, filings, marketData }
+    return {
+      news: dedupedItems,
+      newsSource: rssNews.items.length > 0 ? rssNews.source : directNews.length > 0 ? 'finviz_direct' : 'none',
+      newsSourceError: rssNews.error,
+      analystRatings,
+      insiderTrades,
+      filings,
+      marketData,
+    }
 }
 
 export const finvizScraper: Scraper & { scrapeDetailed(input: { ticker: string }): Promise<FinvizScrapeResult> } = {
