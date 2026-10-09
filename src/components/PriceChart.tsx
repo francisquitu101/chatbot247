@@ -81,7 +81,7 @@ export function PriceChart({ ticker }: { ticker: string }) {
         if (!active) return
         chart = createChart(container, {
           width: container.clientWidth,
-          height: 180,
+          height: container.clientHeight,
           layout: {
             background: { type: ColorType.Solid, color: 'transparent' },
             textColor: '#68746f',
@@ -106,7 +106,7 @@ export function PriceChart({ ticker }: { ticker: string }) {
         chart.timeScale().fitContent()
 
         resizeObserver = new ResizeObserver(() => {
-          chart?.applyOptions({ width: container.clientWidth })
+          chart?.applyOptions({ width: container.clientWidth, height: container.clientHeight })
         })
         resizeObserver.observe(container)
       } catch {
