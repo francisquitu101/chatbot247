@@ -12,6 +12,7 @@ export type AuthCheckResult =
 function getSecretApiKey(name = 'watchlistscheduler'): string {
   const explicitKeyNames: Record<string, string> = {
     watchlistscheduler: 'WATCHLIST_SCHEDULER_KEY',
+    service_role: 'SUPABASE_SERVICE_ROLE_KEY',
   }
 
   const explicitKeyName = explicitKeyNames[name]
@@ -41,7 +42,7 @@ function getSecretApiKey(name = 'watchlistscheduler'): string {
   }
 }
 
-export function createBackendClient(secretName: 'watchlistscheduler' | 'notificationservice' = 'watchlistscheduler') {
+export function createBackendClient(secretName: 'watchlistscheduler' | 'notificationservice' | 'service_role' = 'watchlistscheduler') {
   const url = Deno.env.get('SUPABASE_URL')
   const secretKey = getSecretApiKey(secretName)
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { ArrowRight, Brain, ChartColumnIncreasing, Chrome, Download, ExternalLink, FileText, FolderOpen, LogOut, Newspaper, RefreshCw, Star } from 'lucide-react'
+import { ArrowRight, Brain, ChartColumnIncreasing, Chrome, Crown, Download, ExternalLink, FileText, FolderOpen, LogOut, Newspaper, RefreshCw, Star } from 'lucide-react'
 import { Navbar } from '../components/Navbar'
 import { TerminalLoader } from '../components/TerminalLoader'
 import { getPrivateAnalystByTicker, getPublicAnalystByTicker } from '../lib/analystData'
@@ -89,6 +89,21 @@ function readText(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const normalized = value.trim()
   return normalized.length > 0 ? normalized : null
+}
+
+function getMercadoPagoCheckoutUrl(value: unknown): URL | null {
+  if (typeof value !== 'string') return null
+  try {
+    const url = new URL(value)
+    const hostname = url.hostname.toLowerCase()
+    const isMercadoPagoHost = hostname === 'mercadopago.com'
+      || hostname.endsWith('.mercadopago.com')
+      || /^([a-z0-9-]+\.)?mercadopago\.com\.[a-z]{2}$/.test(hostname)
+      || /^([a-z0-9-]+\.)?mercadopago\.(cl|pe|uy|br|co|mx|ar)$/.test(hostname)
+    return url.protocol === 'https:' && isMercadoPagoHost ? url : null
+  } catch {
+    return null
+  }
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -188,6 +203,10 @@ export function AnalystExperienceDisplay({
   const [authError, setAuthError] = useState<string | null>(null)
   const [newsError, setNewsError] = useState<string | null>(null)
   const [authBusy, setAuthBusy] = useState(false)
+  const [isPro, setIsPro] = useState<boolean | null>(null)
+  const [profileLoadError, setProfileLoadError] = useState<string | null>(null)
+  const [checkoutBusy, setCheckoutBusy] = useState(false)
+  const [checkoutError, setCheckoutError] = useState<string | null>(null)
   const [enqueueBusy, setEnqueueBusy] = useState(false)
   const [enqueueMessage, setEnqueueMessage] = useState<string | null>(null)
   const [enqueueError, setEnqueueError] = useState<string | null>(null)
@@ -209,6 +228,52 @@ export function AnalystExperienceDisplay({
   const [terminalIdleIndex, setTerminalIdleIndex] = useState(0)
 
   const activeTicker = useMemo(() => (ticker ?? 'NVDA').toUpperCase(), [ticker])
+  const sessionUserId = session?.user.id ?? null
+
+  useEffect(() => {
+    if (!sessionUserId || !supabase) {
+      setIsPro(null)
+      setProfileLoadError(null)
+      return
+    }
+
+    const client = supabase
+    let active = true
+    let checkoutRefreshes = 0
+    const loadProfile = async () => {
+      const { data: profile, error: queryError } = await client
+        .from('profiles')
+        .select('is_pro')
+        .eq('id', sessionUserId)
+        .maybeSingle()
+      if (!active) return
+      if (queryError) {
+        setIsPro(null)
+        setProfileLoadError('Unable to check your Pro subscription.')
+        return
+      }
+      setIsPro(profile?.is_pro === true)
+      setProfileLoadError(null)
+    }
+
+    void loadProfile()
+    window.addEventListener('focus', loadProfile)
+    const isCheckoutReturn = window.location.pathname.replace(/\/+$/, '') === '/checkout/success'
+    let refreshInterval: number | undefined
+    if (isCheckoutReturn) {
+      refreshInterval = window.setInterval(() => {
+          checkoutRefreshes += 1
+          void loadProfile()
+          if (checkoutRefreshes >= 24 && refreshInterval !== undefined) window.clearInterval(refreshInterval)
+        }, 5_000)
+    }
+
+    return () => {
+      active = false
+      window.removeEventListener('focus', loadProfile)
+      if (refreshInterval !== undefined) window.clearInterval(refreshInterval)
+    }
+  }, [sessionUserId])
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -216,6 +281,25 @@ export function AnalystExperienceDisplay({
     }, 6_000)
     return () => window.clearInterval(intervalId)
   }, [])
+
+  async function handleUpgradeToPro() {
+    if (!supabase || !session || checkoutBusy) return
+    setCheckoutBusy(true)
+    setCheckoutError(null)
+    try {
+      const { data: response, error: invokeError } = await supabase.functions.invoke<{
+        success: boolean
+        data?: { init_point?: unknown }
+      }>('create-checkout', { body: {} })
+      if (invokeError) throw invokeError
+      const checkoutUrl = response?.success ? getMercadoPagoCheckoutUrl(response.data?.init_point) : null
+      if (!checkoutUrl) throw new Error('The payment provider returned an invalid checkout link.')
+      window.location.assign(checkoutUrl.toString())
+    } catch (error) {
+      setCheckoutError(getErrorMessage(error, 'Unable to start checkout. Please try again.'))
+      setCheckoutBusy(false)
+    }
+  }
 
   async function handleSummarizeNews(articleId: string, articleUrl: string | null, articleTitle: string) {
     setBriefingArticleId(articleId)
@@ -583,6 +667,19 @@ export function AnalystExperienceDisplay({
                 {!authBusy && <ArrowRight size={15} />}
               </button>
             )}
+            {session && isPro === false && (
+              <button
+                type="button"
+                className="luna-upgrade-button"
+                onClick={() => void handleUpgradeToPro()}
+                disabled={checkoutBusy}
+              >
+                <Crown size={14} />
+                {checkoutBusy ? 'Opening checkout...' : 'Upgrade to Pro'}
+              </button>
+            )}
+            {session && profileLoadError && <span className="luna-checkout-error" role="status">{profileLoadError}</span>}
+            {session && checkoutError && <span className="luna-checkout-error" role="alert">{checkoutError}</span>}
             {statusLabel && (
               <div className={`luna-mini-status ${statusTone}`} role="status">
                 <span className="live-dot" />

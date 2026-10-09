@@ -432,3 +432,13 @@ enabled = true
 # declarative_schema_path = "./schemas"
 # JSON string passed through to pg-delta SQL formatting.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
+
+[functions.create-checkout]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/create-checkout/index.ts"
+
+[functions.mercado-pago-webhook]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/mercado-pago-webhook/index.ts"
