@@ -5,7 +5,7 @@ const SEC_TICKERS_URL = 'https://www.sec.gov/files/company_tickers.json'
 const SEC_SUBMISSIONS_URL = 'https://data.sec.gov/submissions/CIK'
 const SEC_ARCHIVES_URL = 'https://www.sec.gov/Archives/edgar/data'
 const SEC_USER_AGENT_ENV = 'SEC_USER_AGENT'
-const REQUEST_TIMEOUT_MS = 15_000
+const REQUEST_TIMEOUT_MS = 8_000
 const RELEVANT_FORMS = new Set([
   '8-K', '10-K', '10-Q', '20-F', '6-K', '3', '4', '5', '144',
   'SC 13D', 'SC 13G', 'SCHEDULE 13D', 'SCHEDULE 13G', 'S-1', 'S-3', 'S-4', 'S-8',
@@ -53,18 +53,30 @@ function getHeaders(): HeadersInit {
 }
 
 async function fetchJson<T>(url: string, headers: HeadersInit): Promise<T> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
-  try {
-    const response = await fetch(url, { headers, signal: controller.signal })
-    if (!response.ok) throw new Error(`SEC_HTTP_${response.status}`)
-    return await response.json() as T
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') throw new Error('SEC_TIMEOUT')
-    throw error
-  } finally {
-    clearTimeout(timeout)
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(url, { headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
+      if (!response.ok) {
+        const error = new Error(`SEC_HTTP_${response.status}`)
+        if (attempt === 0 && (response.status === 429 || response.status >= 500)) {
+          await new Promise((resolve) => setTimeout(resolve, 250))
+          continue
+        }
+        throw error
+      }
+      return await response.json() as T
+    } catch (error) {
+      const isTimeout = error instanceof DOMException && error.name === 'TimeoutError'
+      const isNetworkFailure = error instanceof TypeError
+      if (attempt === 0 && (isTimeout || isNetworkFailure)) {
+        await new Promise((resolve) => setTimeout(resolve, 250))
+        continue
+      }
+      if (isTimeout) throw new Error('SEC_TIMEOUT')
+      throw error
+    }
   }
+  throw new Error('SEC_REQUEST_FAILED')
 }
 
 function normalizeForm(form: string): { baseForm: string; isAmendment: boolean } {

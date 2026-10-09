@@ -7,9 +7,10 @@ import type { Scraper, ScrapedItemDraft } from '../_shared/scraper.ts'
 const FINVIZ_URL = 'https://finviz.com/quote.ashx?t='
 const FINVIZ_FILINGS_URL = 'https://finviz.com/stock?t='
 const FINVIZ_TIME_ZONE = 'America/New_York'
-const KURA_DIRECT_FETCH_TIMEOUT_MS = 10_000
+const KURA_DIRECT_FETCH_TIMEOUT_MS = 8_000
 const GOOGLE_NEWS_RSS_TIMEOUT_MS = 12_000
 const GOOGLE_NEWS_RSS_MAX_BYTES = 1_000_000
+const FINVIZ_FILINGS_TIMEOUT_MS = 8_000
 
 export type FinvizAnalystRatingDraft = {
   ticker: string
@@ -789,14 +790,15 @@ async function scrapeRssNews(ticker: string, sourceId: string): Promise<{
     { source: 'bing_news_rss', provider: 'Bing News', url: bingUrl },
     { source: 'google_news_rss', provider: 'Google News', url: googleUrl },
   ] as const
-  const errors: string[] = []
-
-  for (const feed of feeds) {
-    const result = await scrapeRssFeed(feed, ticker, sourceId)
-    if (result.items.length > 0) return { items: result.items, source: feed.source, error: null }
-    errors.push(`${feed.provider}:${result.error ?? 'no_items'}`)
+  const results = await Promise.all(feeds.map(async (feed) => ({
+    feed,
+    result: await scrapeRssFeed(feed, ticker, sourceId),
+  })))
+  const successful = results.find(({ result }) => result.items.length > 0)
+  if (successful) {
+    return { items: successful.result.items, source: successful.feed.source, error: null }
   }
-
+  const errors = results.map(({ feed, result }) => `${feed.provider}:${result.error ?? 'no_items'}`)
   return { items: [], source: 'none', error: errors.join(',') }
 }
 
@@ -814,23 +816,15 @@ async function scrapeFinvizDetailed({ ticker }: { ticker: string }): Promise<Fin
     let directFetchError: string | null = null
 
     try {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), KURA_DIRECT_FETCH_TIMEOUT_MS)
-      let response: Response
-      try {
-        response = await fetch(finvizUrl, {
-          headers: {
-            Accept: 'text/html,application/xhtml+xml',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36',
-          },
-          redirect: 'follow',
-          signal: controller.signal,
-        })
-      } finally {
-        clearTimeout(timeout)
-      }
-
+      const response = await fetch(finvizUrl, {
+        headers: {
+          Accept: 'text/html,application/xhtml+xml',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36',
+        },
+        redirect: 'follow',
+        signal: AbortSignal.timeout(KURA_DIRECT_FETCH_TIMEOUT_MS),
+      })
       directStatus = response.status
       const contentType = response.headers.get('content-type')
       const html = await response.text()
@@ -895,10 +889,16 @@ async function scrapeFinvizDetailed({ ticker }: { ticker: string }): Promise<Fin
     try {
       const filingsResponse = await fetch(`${FINVIZ_FILINGS_URL}${encodeURIComponent(requestedTicker)}&p=d&ty=lf`, {
         headers: { Accept: 'text/html,application/xhtml+xml', 'Accept-Language': 'en-US,en;q=0.9', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36' },
+        signal: AbortSignal.timeout(FINVIZ_FILINGS_TIMEOUT_MS),
       })
       if (filingsResponse.ok) filings = extractFinvizFilings(await filingsResponse.text(), requestedTicker)
-    } catch {
+    } catch (error) {
       filings = []
+      console.warn(JSON.stringify({
+        event: 'finviz_filings_fetch_failed',
+        ticker: requestedTicker,
+        code: error instanceof Error ? error.message : 'FINVIZ_FILINGS_FETCH_FAILED',
+      }))
     }
 
     return {
