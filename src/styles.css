@@ -1618,39 +1618,24 @@ a { text-decoration: none; color: inherit; }
 }
 
 .luna-news-brief-loading {
-  padding: 12px;
-  border: 1px solid rgba(34, 211, 238, 0.2);
-  border-left: 2px solid #22d3ee;
-  border-radius: 8px;
-  background: rgba(8, 145, 178, 0.08);
-  color: #0891b2;
-  font-weight: 600;
+  padding: 4px 0;
+  border-left: 0;
+  background: transparent;
+}
+
+.luna-news-brief-terminal {
+  color: #6b8d78;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
   animation: luna-news-brief-pulse 1.8s ease-in-out infinite;
 }
 
-.luna-news-brief-progress {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.luna-news-brief-spinner {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 auto;
-  color: #06b6d4;
-  animation: luna-spin 1s linear infinite;
-}
-
 @keyframes luna-news-brief-pulse {
-  50% { opacity: 0.65; }
+  50% { opacity: 0.55; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .luna-news-brief-loading,
-  .luna-news-brief-spinner {
-    animation: none;
-  }
+  .luna-news-brief-terminal { animation: none; }
 }
 
 .luna-news-empty {

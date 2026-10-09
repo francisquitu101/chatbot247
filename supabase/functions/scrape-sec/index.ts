@@ -4,6 +4,13 @@ import { errorResponse, handleOptions, ok, readJson } from '../_shared/response.
 import { normalizeTicker } from '../_shared/scraper.ts'
 import { requireAuthenticatedUser } from '../_shared/supabase.ts'
 
+async function authorizeRequest(request: Request): Promise<void> {
+  const expectedCronKey = Deno.env.get('SEC_INGESTION_KEY')?.trim()
+  const providedCronKey = request.headers.get('x-sec-ingestion-key')?.trim()
+  if (expectedCronKey && providedCronKey && expectedCronKey === providedCronKey) return
+  await requireAuthenticatedUser(request)
+}
+
 Deno.serve(async (request) => {
   const options = handleOptions(request)
   if (options) return options
@@ -11,7 +18,7 @@ Deno.serve(async (request) => {
   let ticker = ''
   try {
     if (request.method !== 'POST') return errorResponse('METHOD_NOT_ALLOWED', 'Use POST', 405, request)
-    await requireAuthenticatedUser(request)
+    await authorizeRequest(request)
     const body = await readJson(request)
     if (!body) return errorResponse('INVALID_JSON', 'Request body must be a JSON object', 400, request)
     ticker = normalizeTicker(body.ticker) ?? ''

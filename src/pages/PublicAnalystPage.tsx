@@ -677,7 +677,7 @@ export function AnalystExperienceDisplay({
           <main className="luna-news-view" aria-live="polite">
             <div className="luna-news-heading">
               <div>
-                <span className="luna-report-eyebrow">FINVIZ · {activeTicker}</span>
+                <span className="luna-report-eyebrow">LATEST NEWS · {activeTicker}</span>
                 <h2>Market News</h2>
               </div>
               <span className="luna-report-count">{finvizNews.length} {finvizNews.length === 1 ? 'article' : 'articles'}</span>
@@ -692,12 +692,18 @@ export function AnalystExperienceDisplay({
               <div className="luna-news-empty">
                 <Newspaper size={25} />
                 <strong>Awaiting news stream...</strong>
-                <span>Finviz headlines will appear here as they are collected.</span>
+                <span>New market headlines will appear here as they are collected.</span>
               </div>
             ) : (
               <div className="luna-news-list">
                 {finvizNews.map((item) => {
-                  const publisher = readText(item.metadata.provider) ?? readText(item.author) ?? 'Finviz'
+                  const extractor = readText(item.metadata.extractor)
+                  const publisher = readText(item.metadata.provider)
+                    ?? readText(item.author)
+                    ?? (extractor === 'yahoo_finance_rss' ? 'Yahoo Finance'
+                      : extractor === 'bing_news_rss' ? 'Bing News'
+                        : extractor === 'google_news_rss' ? 'Google News'
+                          : extractor === 'finviz-news-table' ? 'Finviz' : 'News source')
                   const articleUrl = getExternalHttpUrl(item.url)
                   const headline = cleanupDisplayText(item.title)
                   const briefing = newsBriefings[item.id]
@@ -723,13 +729,11 @@ export function AnalystExperienceDisplay({
                         }}
                       >
                         <Brain size={13} aria-hidden="true" />
-                        {briefing?.status === 'loading'
-                          ? 'Summarizing...'
-                          : briefingArticleId === item.id && briefing?.status === 'success'
-                            ? 'Hide brief'
-                            : briefing?.status === 'error'
-                              ? 'Retry summary'
-                              : 'Summarize'}
+                        {briefingArticleId === item.id && briefing?.status === 'success'
+                          ? 'Hide brief'
+                          : briefing?.status === 'error'
+                            ? 'Retry summary'
+                            : 'Summarize'}
                       </button>
                       <div
                         className={`luna-news-brief${briefing?.status === 'loading' ? ' luna-news-brief-loading' : ''}`}
@@ -738,19 +742,13 @@ export function AnalystExperienceDisplay({
                         aria-live="polite"
                         hidden={briefingArticleId !== item.id}
                       >
-                        {briefing?.status === 'loading' ? (
-                          <span className="luna-news-brief-progress">
-                            <svg className="luna-news-brief-spinner" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                              <path fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4z" />
-                            </svg>
-                            <span>Analizando artículo y extrayendo métricas clave...</span>
-                          </span>
-                        ) : briefing?.status === 'success'
-                          ? briefing.summary
-                          : briefing?.status === 'error'
-                            ? '[Error: Unable to extract article content]'
-                            : null}
+                        {briefing?.status === 'loading'
+                          ? <span className="luna-news-brief-terminal">&gt; Extracting key metrics &amp; analyzing article...</span>
+                          : briefing?.status === 'success'
+                            ? briefing.summary
+                            : briefing?.status === 'error'
+                              ? '[Error: Unable to extract article content]'
+                              : null}
                       </div>
                       {articleUrl && (
                         <a href={articleUrl} target="_blank" rel="noreferrer">
