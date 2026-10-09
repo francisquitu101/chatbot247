@@ -91,16 +91,13 @@ function readText(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null
 }
 
-function getMercadoPagoCheckoutUrl(value: unknown): URL | null {
+function getPayPalCheckoutUrl(value: unknown): URL | null {
   if (typeof value !== 'string') return null
   try {
     const url = new URL(value)
     const hostname = url.hostname.toLowerCase()
-    const isMercadoPagoHost = hostname === 'mercadopago.com'
-      || hostname.endsWith('.mercadopago.com')
-      || /^([a-z0-9-]+\.)?mercadopago\.com\.[a-z]{2}$/.test(hostname)
-      || /^([a-z0-9-]+\.)?mercadopago\.(cl|pe|uy|br|co|mx|ar)$/.test(hostname)
-    return url.protocol === 'https:' && isMercadoPagoHost ? url : null
+    const isPayPalHost = hostname === 'paypal.com' || hostname.endsWith('.paypal.com')
+    return url.protocol === 'https:' && isPayPalHost ? url : null
   } catch {
     return null
   }
@@ -289,10 +286,10 @@ export function AnalystExperienceDisplay({
     try {
       const { data: response, error: invokeError } = await supabase.functions.invoke<{
         success: boolean
-        data?: { init_point?: unknown }
+        data?: { approval_url?: unknown }
       }>('create-checkout', { body: {} })
       if (invokeError) throw invokeError
-      const checkoutUrl = response?.success ? getMercadoPagoCheckoutUrl(response.data?.init_point) : null
+      const checkoutUrl = response?.success ? getPayPalCheckoutUrl(response.data?.approval_url) : null
       if (!checkoutUrl) throw new Error('The payment provider returned an invalid checkout link.')
       window.location.assign(checkoutUrl.toString())
     } catch (error) {

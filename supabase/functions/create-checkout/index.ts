@@ -3,14 +3,15 @@ import {
   requireAuthenticatedUser,
 } from "../_shared/supabase.ts";
 import { errorResponse, handleOptions, ok } from "../_shared/response.ts";
+import { getPayPalAccessToken, getPayPalApiUrl } from "../_shared/paypal.ts";
 
-const CHECKOUT_AMOUNT = 49.9;
+const CHECKOUT_AMOUNT = "49.90";
 const CHECKOUT_TITLE = "MarketMole Pro - Lifetime Access";
-const MERCADO_PAGO_TIMEOUT_MS = 15_000;
+const PAYPAL_TIMEOUT_MS = 15_000;
 
-type MercadoPagoPreference = {
+type PayPalOrder = {
   id?: unknown;
-  init_point?: unknown;
+  links?: Array<{ href?: unknown; rel?: unknown }>;
 };
 
 Deno.serve(async (request) => {
@@ -22,14 +23,13 @@ Deno.serve(async (request) => {
 
   try {
     const user = await requireAuthenticatedUser(request);
-    const accessToken = Deno.env.get("MP_ACCESS_TOKEN");
-    if (!accessToken) {
-      console.error(
-        JSON.stringify({
-          event: "checkout_configuration_error",
-          code: "MP_ACCESS_TOKEN_MISSING",
-        }),
-      );
+    const clientId = Deno.env.get("PAYPAL_CLIENT_ID");
+    const clientSecret = Deno.env.get("PAYPAL_CLIENT_SECRET");
+    if (!clientId || !clientSecret) {
+      console.error(JSON.stringify({
+        event: "paypal_checkout_configuration_error",
+        code: "PAYPAL_CREDENTIALS_MISSING",
+      }));
       return errorResponse(
         "CHECKOUT_NOT_CONFIGURED",
         "Checkout is not configured.",
@@ -38,12 +38,12 @@ Deno.serve(async (request) => {
       );
     }
 
-    let baseUrl: URL;
+    let appBaseUrl: URL;
     try {
-      baseUrl = new URL(
+      appBaseUrl = new URL(
         Deno.env.get("VITE_APP_BASE_URL") || "http://localhost:5173",
       );
-      if (baseUrl.protocol !== "http:" && baseUrl.protocol !== "https:") {
+      if (appBaseUrl.protocol !== "https:" && appBaseUrl.hostname !== "localhost" && appBaseUrl.hostname !== "127.0.0.1") {
         throw new Error("INVALID_APP_BASE_URL");
       }
     } catch {
@@ -55,46 +55,44 @@ Deno.serve(async (request) => {
       );
     }
 
-    const orderId = crypto.randomUUID();
     const controller = new AbortController();
-    const timeout = setTimeout(
-      () => controller.abort(),
-      MERCADO_PAGO_TIMEOUT_MS,
-    );
-    let preferenceResponse: Response;
+    const timeout = setTimeout(() => controller.abort(), PAYPAL_TIMEOUT_MS);
+    let paypalOrderResponse: Response;
     try {
-      preferenceResponse = await fetch(
-        "https://api.mercadopago.com/checkout/preferences",
+      const accessToken = await getPayPalAccessToken();
+      paypalOrderResponse = await fetch(
+        `${getPayPalApiUrl()}/v2/checkout/orders`,
         {
           method: "POST",
           headers: {
             Authorization: `Bearer ${accessToken}`,
             "Content-Type": "application/json",
+            Prefer: "return=representation",
           },
           body: JSON.stringify({
-            items: [{
-              title: CHECKOUT_TITLE,
-              unit_price: CHECKOUT_AMOUNT,
-              quantity: 1,
-              currency_id: "USD",
+            intent: "CAPTURE",
+            purchase_units: [{
+              description: CHECKOUT_TITLE,
+              amount: {
+                currency_code: "USD",
+                value: CHECKOUT_AMOUNT,
+              },
             }],
-            external_reference: orderId,
-            back_urls: {
-              success: new URL("/checkout/success", baseUrl).toString(),
-              failure: new URL("/checkout/failure", baseUrl).toString(),
-              pending: new URL("/checkout/pending", baseUrl).toString(),
+            application_context: {
+              return_url: new URL("/checkout/success", appBaseUrl).toString(),
+              cancel_url: new URL("/checkout/failure", appBaseUrl).toString(),
+              user_action: "PAY_NOW",
             },
-            auto_return: "approved",
           }),
           signal: controller.signal,
         },
       );
     } catch (error) {
       const code = error instanceof DOMException && error.name === "AbortError"
-        ? "MERCADO_PAGO_TIMEOUT"
-        : "MERCADO_PAGO_UNAVAILABLE";
+        ? "PAYPAL_TIMEOUT"
+        : "PAYPAL_UNAVAILABLE";
       console.error(
-        JSON.stringify({ event: "checkout_preference_failed", code }),
+        JSON.stringify({ event: "paypal_order_creation_failed", code }),
       );
       return errorResponse(
         "CHECKOUT_PROVIDER_ERROR",
@@ -106,10 +104,12 @@ Deno.serve(async (request) => {
       clearTimeout(timeout);
     }
 
-    if (!preferenceResponse.ok) {
+    if (!paypalOrderResponse.ok) {
+      const providerError = await paypalOrderResponse.text();
       console.error(JSON.stringify({
-        event: "checkout_preference_rejected",
-        status: preferenceResponse.status,
+        event: "paypal_order_rejected",
+        status: paypalOrderResponse.status,
+        provider_error: providerError,
       }));
       return errorResponse(
         "CHECKOUT_PROVIDER_ERROR",
@@ -119,17 +119,36 @@ Deno.serve(async (request) => {
       );
     }
 
-    const preference = await preferenceResponse.json() as MercadoPagoPreference;
-    if (
-      typeof preference.id !== "string" ||
-      typeof preference.init_point !== "string"
-    ) {
+    const paypalOrder = await paypalOrderResponse.json() as PayPalOrder;
+    const paypalOrderId = typeof paypalOrder.id === "string"
+      ? paypalOrder.id
+      : null;
+    const approvalUrl = paypalOrder.links?.find((link) => link.rel === "approve")
+      ?.href;
+    if (paypalOrderId === null || typeof approvalUrl !== "string") {
       console.error(
-        JSON.stringify({ event: "checkout_preference_invalid_response" }),
+        JSON.stringify({ event: "paypal_order_invalid_response" }),
       );
       return errorResponse(
         "CHECKOUT_PROVIDER_ERROR",
-        "The checkout provider returned an invalid response.",
+        "The payment provider returned an invalid checkout link.",
+        502,
+        request,
+      );
+    }
+
+    const parsedApprovalUrl = new URL(approvalUrl);
+    const approvalHost = parsedApprovalUrl.hostname.toLowerCase();
+    if (
+      parsedApprovalUrl.protocol !== "https:" ||
+      !(approvalHost === "paypal.com" || approvalHost.endsWith(".paypal.com"))
+    ) {
+      console.error(
+        JSON.stringify({ event: "paypal_order_invalid_approval_url" }),
+      );
+      return errorResponse(
+        "CHECKOUT_PROVIDER_ERROR",
+        "The payment provider returned an invalid checkout link.",
         502,
         request,
       );
@@ -139,9 +158,8 @@ Deno.serve(async (request) => {
     const { error: orderError } = await client
       .from("orders")
       .insert({
-        id: orderId,
         user_id: user.id,
-        mp_preference_id: preference.id,
+        paypal_order_id: paypalOrderId,
         status: "pending",
         amount: CHECKOUT_AMOUNT,
       });
@@ -158,10 +176,7 @@ Deno.serve(async (request) => {
       );
     }
 
-    return ok({
-      init_point: preference.init_point,
-      preference_id: preference.id,
-    }, request);
+    return ok({ approval_url: approvalUrl }, request);
   } catch (error) {
     const code = error instanceof Error ? error.message : "CHECKOUT_FAILED";
     if (code === "AUTHORIZATION_REQUIRED" || code === "INVALID_ACCESS_TOKEN") {
@@ -174,7 +189,7 @@ Deno.serve(async (request) => {
     }
     if (code === "BACKEND_CONFIG_MISSING") {
       console.error(
-        JSON.stringify({ event: "checkout_configuration_error", code }),
+        JSON.stringify({ event: "paypal_checkout_configuration_error", code }),
       );
       return errorResponse(
         "CHECKOUT_NOT_CONFIGURED",
@@ -183,7 +198,7 @@ Deno.serve(async (request) => {
         request,
       );
     }
-    console.error(JSON.stringify({ event: "checkout_failed", code }));
+    console.error(JSON.stringify({ event: "paypal_checkout_failed", code }));
     return errorResponse(
       "CHECKOUT_FAILED",
       "Unable to start checkout. Please try again.",

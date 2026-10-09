@@ -6,6 +6,7 @@ import { TerminalLoader } from './components/TerminalLoader'
 import { PublicAnalystPage } from './pages/PublicAnalystPage'
 
 type CheckoutStatus = 'success' | 'pending' | 'failure'
+type PayPalCaptureState = 'loading' | 'completed' | 'failed' | null
 
 type AppRoute = {
   ticker: string
@@ -27,32 +28,80 @@ function routeFromLocation(): AppRoute {
   return { ticker: 'NVDA' }
 }
 
-function CheckoutReturnPage({ status }: { status: CheckoutStatus }) {
-  const content = {
-    success: {
-      eyebrow: 'PAYMENT CONFIRMED',
-      title: 'Payment Successful.',
-      message: 'Welcome to MarketMole Pro!',
-      detail: 'Your Pro access will be ready as soon as the payment confirmation finishes syncing.',
-    },
-    pending: {
-      eyebrow: 'PAYMENT PROCESSING',
-      title: 'Your payment is pending.',
-      message: 'We will activate MarketMole Pro when Mercado Pago confirms it.',
-      detail: 'You can return to MarketMole; your Pro status will refresh automatically after confirmation.',
-    },
-    failure: {
-      eyebrow: 'PAYMENT NOT COMPLETED',
-      title: 'We could not confirm your payment.',
-      message: 'No Pro subscription was activated.',
-      detail: 'You can return to MarketMole and try checkout again.',
-    },
-  }[status]
+function CheckoutReturnPage({ status, session }: { status: CheckoutStatus; session: Session | null }) {
+  const [captureState, setCaptureState] = useState<PayPalCaptureState>(null)
+
+  useEffect(() => {
+    if (status !== 'success') return
+
+    let active = true
+    const capturePayment = async () => {
+      const orderId = new URLSearchParams(window.location.search).get('token')
+      if (!supabase || !session || !orderId) {
+        if (active) setCaptureState('failed')
+        return
+      }
+
+      setCaptureState('loading')
+      try {
+        const { data: response, error } = await supabase.functions.invoke<{
+          success: boolean
+          data?: { status?: string }
+        }>('capture-paypal-order', { body: { order_id: orderId } })
+        if (!active) return
+        setCaptureState(!error && response?.success === true && response.data?.status === 'completed'
+          ? 'completed'
+          : 'failed')
+      } catch {
+        if (active) setCaptureState('failed')
+      }
+    }
+
+    void capturePayment()
+    return () => { active = false }
+  }, [session, status])
+
+  const content = status === 'success'
+    ? captureState === 'completed'
+      ? {
+          eyebrow: 'PAYMENT CONFIRMED',
+          title: 'Payment Successful.',
+          message: 'Welcome to MarketMole Pro!',
+          detail: 'Your PayPal payment was captured and Pro access is active.',
+        }
+      : captureState === 'failed'
+        ? {
+            eyebrow: 'PAYMENT NOT CONFIRMED',
+            title: 'We could not confirm your payment.',
+            message: 'Pro access has not been activated.',
+            detail: 'Sign in with the account used for checkout, then reload this page to retry the confirmation.',
+          }
+        : {
+            eyebrow: 'CAPTURING PAYMENT',
+            title: 'Confirming your payment…',
+            message: 'Please keep this page open.',
+            detail: 'PayPal approval is complete; MarketMole is securely capturing your payment.',
+          }
+    : status === 'pending'
+      ? {
+          eyebrow: 'PAYMENT PROCESSING',
+          title: 'Your payment is pending.',
+          message: 'PayPal has not completed this payment yet.',
+          detail: 'You can return to MarketMole and check again later.',
+        }
+      : {
+          eyebrow: 'PAYMENT NOT COMPLETED',
+          title: 'We could not confirm your payment.',
+          message: 'No Pro subscription was activated.',
+          detail: 'You can return to MarketMole and try checkout again.',
+        }
+  const displayStatus = status === 'success' && captureState === 'failed' ? 'failure' : status
+  const isCapturing = status === 'success' && (captureState === null || captureState === 'loading')
 
   return (
     <main className="checkout-return">
-      <section className={`checkout-return-card checkout-return-${status}`} aria-labelledby="checkout-return-title">
-        <span className="checkout-return-mark" aria-hidden="true">{status === 'success' ? '✓' : status === 'pending' ? '…' : '!'}</span>
+      <section className={`checkout-return-card checkout-return-${displayStatus}`} aria-labelledby="checkout-return-title" aria-busy={isCapturing}>
+        <span className="checkout-return-mark" aria-hidden="true">{displayStatus === 'success' ? '✓' : displayStatus === 'pending' || isCapturing ? '…' : '!'}</span>
         <p className="checkout-return-eyebrow">{content.eyebrow}</p>
         <h1 id="checkout-return-title">{content.title}</h1>
         <p className="checkout-return-message">{content.message}</p>
@@ -119,7 +168,7 @@ function App() {
   }
 
   if (route.checkoutStatus) {
-    return <CheckoutReturnPage status={route.checkoutStatus} />
+    return <CheckoutReturnPage status={route.checkoutStatus} session={session} />
   }
 
   if (!supabase) {

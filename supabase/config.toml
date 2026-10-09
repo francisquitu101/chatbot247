@@ -438,7 +438,7 @@ enabled = true
 verify_jwt = true
 entrypoint = "./functions/create-checkout/index.ts"
 
-[functions.mercado-pago-webhook]
+[functions.capture-paypal-order]
 enabled = true
-verify_jwt = false
-entrypoint = "./functions/mercado-pago-webhook/index.ts"
+verify_jwt = true
+entrypoint = "./functions/capture-paypal-order/index.ts"
