@@ -263,12 +263,20 @@ export function AnalystExperienceDisplay({
   const [watchlistMessage, setWatchlistMessage] = useState<string | null>(null)
   const [watchlistOwner, setWatchlistOwner] = useState<string | null>(null)
   const refreshTickerDataRef = useRef<((tickerToRefresh: string) => Promise<void>) | null>(null)
+  const tickerScanTimeoutsRef = useRef<Record<string, number[]>>({})
+  const tickerScanIdsRef = useRef<Record<string, number>>({})
+  const tickerScanFinishedIdsRef = useRef<Record<string, number>>({})
+  const tickerScanSequenceRef = useRef(0)
 
   const [activeTicker, setActiveTicker] = useState((ticker ?? 'NVDA').toUpperCase())
   const activeTickerRef = useRef(activeTicker)
   activeTickerRef.current = activeTicker
   const sessionUserId = session?.user.id ?? null
   const watchlistStorageKey = sessionUserId ? `marketmole-watchlist:${sessionUserId}` : 'marketmole-watchlist:guest'
+
+  useEffect(() => () => {
+    Object.values(tickerScanTimeoutsRef.current).flat().forEach((timeoutId) => window.clearTimeout(timeoutId))
+  }, [])
 
   useEffect(() => {
     const nextTicker = (ticker ?? 'NVDA').trim().toUpperCase()
@@ -432,7 +440,6 @@ export function AnalystExperienceDisplay({
   async function startTickerExtraction(nextTicker: string) {
     const client = supabase
     appendTerminalLog(nextTicker, `[SYS] Executing immediate deep-scan for ${nextTicker}...`)
-    appendTerminalLog(nextTicker, `[SYS] Connecting to SEC EDGAR database for ${nextTicker}...`)
     if (!client || !session) {
       appendTerminalLog(nextTicker, '[SYS] Sign in is required before live ticker extraction can start.')
       setTickerExtraction((current) => ({
@@ -442,18 +449,44 @@ export function AnalystExperienceDisplay({
       return
     }
 
+    for (const timeoutId of tickerScanTimeoutsRef.current[nextTicker] ?? []) window.clearTimeout(timeoutId)
+    tickerScanTimeoutsRef.current[nextTicker] = []
+    const scanId = tickerScanSequenceRef.current + 1
+    tickerScanSequenceRef.current = scanId
+    tickerScanIdsRef.current[nextTicker] = scanId
+    delete tickerScanFinishedIdsRef.current[nextTicker]
+
     const updateProgress = (step: number) => {
-      setTickerExtraction((current) => ({
-        ...current,
-        [nextTicker]: { status: 'running', step },
-      }))
+      setTickerExtraction((current) => current[nextTicker]?.status === 'running'
+        ? { ...current, [nextTicker]: { status: 'running', step } }
+        : current)
     }
     const refreshTickerData = async () => {
       const refresh = refreshTickerDataRef.current
       if (!refresh) throw new Error('Ticker data refresh is not ready.')
       await refresh(nextTicker)
     }
-    updateProgress(0)
+    const schedule = (delayMs: number, callback: () => void) => {
+      const timeoutId = window.setTimeout(() => {
+        tickerScanTimeoutsRef.current[nextTicker] = (tickerScanTimeoutsRef.current[nextTicker] ?? [])
+          .filter((scheduledId) => scheduledId !== timeoutId)
+        if (tickerScanIdsRef.current[nextTicker] !== scanId) return
+        callback()
+      }, delayMs)
+      tickerScanTimeoutsRef.current[nextTicker].push(timeoutId)
+    }
+    const scheduleDataRefresh = (delayMs: number) => schedule(delayMs, () => {
+      if (activeTickerRef.current !== nextTicker) return
+      void refreshTickerData().catch((refreshError: unknown) => {
+        const message = getErrorMessage(refreshError, `Unable to refresh ${nextTicker} data.`)
+        console.warn(`[ticker-scan] ${nextTicker} database refresh failed:`, refreshError)
+        appendTerminalLog(nextTicker, `[SYS] Database refresh failed: ${message}`)
+      })
+    })
+    setTickerExtraction((current) => ({
+      ...current,
+      [nextTicker]: { status: 'running', step: 0 },
+    }))
 
     try {
       const { data: authData, error: authError } = await client.auth.getSession()
@@ -464,71 +497,108 @@ export function AnalystExperienceDisplay({
       const trackedTicker = await updateWatchlist('enable', nextTicker, accessToken)
       if (!trackedTicker) throw new Error(`Could not enable ${nextTicker} for background extraction.`)
 
-      appendTerminalLog(nextTicker, '[SYS] Extracting latest 8-K and 10-Q filings...')
-      updateProgress(1)
-      const { data: secResponse, error: secError } = await client.functions.invoke<{
-        success: boolean
-        error?: { message?: string }
-      }>('scrape-sec', { body: { ticker: nextTicker } })
-      if (secError) throw secError
-      if (secResponse?.success !== true) {
-        throw new Error(secResponse?.error?.message ?? `SEC extraction failed for ${nextTicker}.`)
-      }
-      appendTerminalLog(nextTicker, `[SYS] SEC filing extraction completed for ${nextTicker}.`)
-      await refreshTickerData()
+      appendTerminalLog(nextTicker, `[SYS] Connecting to SEC EDGAR database for ${nextTicker}...`)
+      appendTerminalLog(nextTicker, '[SYS] Scan started in background; checking for new records shortly.')
+      schedule(2_000, () => {
+        if (tickerScanFinishedIdsRef.current[nextTicker] === scanId) return
+        appendTerminalLog(nextTicker, '[SYS] Extracting latest 8-K and 10-Q filings...')
+        updateProgress(1)
+      })
+      schedule(6_000, () => {
+        if (tickerScanFinishedIdsRef.current[nextTicker] === scanId) return
+        appendTerminalLog(nextTicker, '[SYS] Aggregating market news and insider forms...')
+        updateProgress(2)
+      })
+      schedule(12_000, () => {
+        if (tickerScanFinishedIdsRef.current[nextTicker] === scanId) return
+        setTickerExtraction((current) => current[nextTicker]?.status === 'running'
+          ? { ...current, [nextTicker]: { status: 'complete', step: 2, message: `Background scan is continuing; checking for ${nextTicker} data.` } }
+          : current)
+      })
 
-      appendTerminalLog(nextTicker, '[SYS] Aggregating market news and insider forms...')
-      updateProgress(2)
-      const { data: finvizResponse, error: finvizError } = await client.functions.invoke<{
+      const runScraper = (
+        functionName: 'scrape-sec' | 'scrape-finviz',
+        sourceLabel: string,
+      ) => client.functions.invoke<{
         success: boolean
         error?: { message?: string }
-      }>('scrape-finviz', { body: { ticker: nextTicker } })
-      if (finvizError) throw finvizError
-      if (finvizResponse?.success !== true) {
-        throw new Error(finvizResponse?.error?.message ?? `Market news and insider extraction failed for ${nextTicker}.`)
-      }
-      appendTerminalLog(nextTicker, `[SYS] Market news and insider extraction completed for ${nextTicker}.`)
-      await refreshTickerData()
-      setTickerExtraction((current) => ({
-        ...current,
-        [nextTicker]: { status: 'complete', step: 2, message: `Market data for ${nextTicker} is up to date.` },
-      }))
+      }>(functionName, { body: { ticker: nextTicker } }).then(({ data: response, error: invokeError }) => {
+        if (invokeError) throw invokeError
+        if (response?.success !== true) {
+          throw new Error(response?.error?.message ?? `${sourceLabel} extraction failed for ${nextTicker}.`)
+        }
+        appendTerminalLog(nextTicker, `[SYS] ${sourceLabel} extraction finished for ${nextTicker}.`)
+        return response
+      }).catch((scrapeError: unknown) => {
+        console.warn(`[ticker-scan] ${sourceLabel} extraction failed for ${nextTicker}:`, scrapeError)
+        appendTerminalLog(nextTicker, `[SYS] ${sourceLabel} extraction failed: ${getErrorMessage(scrapeError, 'request failed')}`)
+        throw scrapeError
+      })
 
-      const { data: enqueueResponse, error: enqueueError } = await client.functions.invoke<{
-        success: boolean
-        data?: { job_id?: string }
-        error?: { message?: string }
-      }>('enqueue-sec-analysis', { body: { ticker: nextTicker } })
-      if (!enqueueError && enqueueResponse?.success === true && enqueueResponse.data?.job_id) {
-        appendTerminalLog(nextTicker, '[SYS] Running AI sentiment analysis. This may take a minute...')
-        const { error: analysisError } = await client.functions.invoke('process-analyst-job', {
-          body: { job_id: enqueueResponse.data.job_id },
-        })
-        if (analysisError) {
-          appendTerminalLog(nextTicker, `[SYS] AI analysis request failed: ${getErrorMessage(analysisError, 'analysis request failed')}`)
+      const scrapeResults = Promise.allSettled([
+        runScraper('scrape-sec', 'SEC'),
+        runScraper('scrape-finviz', 'Finviz'),
+      ])
+      scheduleDataRefresh(4_000)
+      scheduleDataRefresh(10_000)
+      scheduleDataRefresh(20_000)
+      scheduleDataRefresh(35_000)
+
+      void scrapeResults.then(async (results) => {
+        const succeeded = results.filter((result) => result.status === 'fulfilled').length
+        tickerScanFinishedIdsRef.current[nextTicker] = scanId
+        if (activeTickerRef.current === nextTicker) await refreshTickerData()
+        if (succeeded === 0) {
+          if (tickerScanIdsRef.current[nextTicker] !== scanId) return
           setTickerExtraction((current) => ({
             ...current,
-            [nextTicker]: { status: 'complete', step: 3, message: `Data extraction finished; AI analysis could not start: ${getErrorMessage(analysisError, 'analysis request failed')}` },
+            [nextTicker]: { status: 'error', step: 2, message: `Both background scrapers failed for ${nextTicker}.` },
           }))
           return
         }
-        appendTerminalLog(nextTicker, `[SYS] AI analysis completed for ${nextTicker}.`)
-      } else {
-        const detail = enqueueError
-          ? getErrorMessage(enqueueError, 'analysis job could not be queued')
-          : enqueueResponse?.error?.message ?? `No SEC analysis job is available yet for ${nextTicker}.`
+        if (tickerScanIdsRef.current[nextTicker] !== scanId) return
         setTickerExtraction((current) => ({
           ...current,
-          [nextTicker]: { status: 'complete', step: 2, message: `Data extraction finished; ${detail}` },
+          [nextTicker]: {
+            status: 'complete',
+            step: 2,
+            message: succeeded === results.length
+              ? `Market data for ${nextTicker} was refreshed.`
+              : `Some ${nextTicker} data was refreshed; one source failed.`,
+          },
         }))
-        appendTerminalLog(nextTicker, `[SYS] Data collection finished for ${nextTicker}; ${detail}`)
-        return
-      }
+        if (succeeded !== results.length) return
 
-      setTickerExtraction((current) => ({
-        ...current,
-        [nextTicker]: { status: 'complete', step: 3, message: `AI analysis completed for ${nextTicker}.` },
-      }))
+        const { data: enqueueResponse, error: enqueueError } = await client.functions.invoke<{
+          success: boolean
+          data?: { job_id?: string }
+          error?: { message?: string }
+        }>('enqueue-sec-analysis', { body: { ticker: nextTicker } })
+        if (enqueueError || enqueueResponse?.success !== true || !enqueueResponse.data?.job_id) {
+          const detail = enqueueError
+            ? getErrorMessage(enqueueError, 'analysis job could not be queued')
+            : enqueueResponse?.error?.message ?? 'No analysis job was created.'
+          appendTerminalLog(nextTicker, `[SYS] Market data is ready; AI analysis was not queued: ${detail}`)
+          return
+        }
+        appendTerminalLog(nextTicker, '[SYS] AI sentiment analysis queued in the background.')
+        void client.functions.invoke<{ success: boolean; error?: { message?: string } }>(
+          'process-analyst-job',
+          { body: { job_id: enqueueResponse.data.job_id } },
+        ).then(({ data: processResponse, error: processError }) => {
+          if (processError) throw processError
+          if (processResponse?.success !== true) {
+            throw new Error(processResponse?.error?.message ?? 'AI analysis worker could not start.')
+          }
+          appendTerminalLog(nextTicker, '[SYS] AI analysis worker started in the background.')
+        }).catch((processError: unknown) => {
+          console.warn(`[ticker-scan] AI analysis worker failed for ${nextTicker}:`, processError)
+          appendTerminalLog(nextTicker, `[SYS] AI analysis worker failed: ${getErrorMessage(processError, 'request failed')}`)
+        })
+      }).catch((backgroundError: unknown) => {
+        console.warn(`[ticker-scan] Background completion handling failed for ${nextTicker}:`, backgroundError)
+        appendTerminalLog(nextTicker, `[SYS] Background completion handling failed: ${getErrorMessage(backgroundError, 'refresh failed')}`)
+      })
     } catch (extractionError) {
       const message = getErrorMessage(extractionError, `Unable to extract data for ${nextTicker}.`)
       appendTerminalLog(nextTicker, `[SYS] Extraction failed for ${nextTicker}: ${message}`)
