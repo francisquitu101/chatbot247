@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { ArrowRight, Brain, ChartColumnIncreasing, Chrome, Crown, Download, ExternalLink, FileText, FolderOpen, LogOut, Newspaper, Plus, RefreshCw, Star, TrendingUp } from 'lucide-react'
 import { Navbar } from '../components/Navbar'
@@ -262,8 +262,11 @@ export function AnalystExperienceDisplay({
   const [watchlistInput, setWatchlistInput] = useState('')
   const [watchlistMessage, setWatchlistMessage] = useState<string | null>(null)
   const [watchlistOwner, setWatchlistOwner] = useState<string | null>(null)
+  const refreshTickerDataRef = useRef<((tickerToRefresh: string) => Promise<void>) | null>(null)
 
   const [activeTicker, setActiveTicker] = useState((ticker ?? 'NVDA').toUpperCase())
+  const activeTickerRef = useRef(activeTicker)
+  activeTickerRef.current = activeTicker
   const sessionUserId = session?.user.id ?? null
   const watchlistStorageKey = sessionUserId ? `marketmole-watchlist:${sessionUserId}` : 'marketmole-watchlist:guest'
 
@@ -428,6 +431,7 @@ export function AnalystExperienceDisplay({
 
   async function startTickerExtraction(nextTicker: string) {
     const client = supabase
+    appendTerminalLog(nextTicker, `[SYS] Executing immediate deep-scan for ${nextTicker}...`)
     appendTerminalLog(nextTicker, `[SYS] Connecting to SEC EDGAR database for ${nextTicker}...`)
     if (!client || !session) {
       appendTerminalLog(nextTicker, '[SYS] Sign in is required before live ticker extraction can start.')
@@ -444,29 +448,14 @@ export function AnalystExperienceDisplay({
         [nextTicker]: { status: 'running', step },
       }))
     }
+    const refreshTickerData = async () => {
+      const refresh = refreshTickerDataRef.current
+      if (!refresh) throw new Error('Ticker data refresh is not ready.')
+      await refresh(nextTicker)
+    }
     updateProgress(0)
 
     try {
-      const [scrapedResult, ratingsResult, insiderResult, evidenceResult] = await Promise.all([
-        client.from('scraped_items').select('id', { count: 'exact', head: true }).eq('ticker', nextTicker),
-        client.from('finviz_analyst_ratings').select('id', { count: 'exact', head: true }).eq('ticker', nextTicker),
-        client.from('finviz_insider_trades').select('id', { count: 'exact', head: true }).eq('ticker', nextTicker),
-        client.from('evidence_items').select('id', { count: 'exact', head: true }).eq('ticker', nextTicker),
-      ])
-      const lookupError = [scrapedResult.error, ratingsResult.error, insiderResult.error, evidenceResult.error].find(Boolean)
-      if (lookupError) throw lookupError
-
-      const hasExistingData = [scrapedResult.count, ratingsResult.count, insiderResult.count, evidenceResult.count]
-        .some((count) => (count ?? 0) > 0)
-      if (hasExistingData) {
-        appendTerminalLog(nextTicker, `[SYS] Existing market data found for ${nextTicker}; skipping initial extraction.`)
-        setTickerExtraction((current) => ({
-          ...current,
-          [nextTicker]: { status: 'complete', step: -1, message: `Market data for ${nextTicker} is already available.` },
-        }))
-        return
-      }
-
       const { data: authData, error: authError } = await client.auth.getSession()
       if (authError) throw authError
       const accessToken = authData.session?.access_token
@@ -486,6 +475,7 @@ export function AnalystExperienceDisplay({
         throw new Error(secResponse?.error?.message ?? `SEC extraction failed for ${nextTicker}.`)
       }
       appendTerminalLog(nextTicker, `[SYS] SEC filing extraction completed for ${nextTicker}.`)
+      await refreshTickerData()
 
       appendTerminalLog(nextTicker, '[SYS] Aggregating market news and insider forms...')
       updateProgress(2)
@@ -498,6 +488,11 @@ export function AnalystExperienceDisplay({
         throw new Error(finvizResponse?.error?.message ?? `Market news and insider extraction failed for ${nextTicker}.`)
       }
       appendTerminalLog(nextTicker, `[SYS] Market news and insider extraction completed for ${nextTicker}.`)
+      await refreshTickerData()
+      setTickerExtraction((current) => ({
+        ...current,
+        [nextTicker]: { status: 'complete', step: 2, message: `Market data for ${nextTicker} is up to date.` },
+      }))
 
       const { data: enqueueResponse, error: enqueueError } = await client.functions.invoke<{
         success: boolean
@@ -506,7 +501,6 @@ export function AnalystExperienceDisplay({
       }>('enqueue-sec-analysis', { body: { ticker: nextTicker } })
       if (!enqueueError && enqueueResponse?.success === true && enqueueResponse.data?.job_id) {
         appendTerminalLog(nextTicker, '[SYS] Running AI sentiment analysis. This may take a minute...')
-        updateProgress(3)
         const { error: analysisError } = await client.functions.invoke('process-analyst-job', {
           body: { job_id: enqueueResponse.data.job_id },
         })
@@ -715,45 +709,48 @@ export function AnalystExperienceDisplay({
 
     const client = supabase
 
-    async function loadAnalyst() {
+    async function loadAnalyst(tickerToLoad = activeTicker) {
       try {
-        setLoading(true)
-        setError(null)
-        setNewsError(null)
+        if (tickerToLoad === activeTickerRef.current) {
+          setLoading(true)
+          setError(null)
+          setNewsError(null)
+        }
 
         const result = privateView
           ? await (async () => {
             const { data: { user }, error: userError } = await client.auth.getUser()
             if (userError) throw userError
             if (!user) throw new Error('No authenticated user found.')
-            return getPrivateAnalystByTicker(client, activeTicker, user.id)
+            return getPrivateAnalystByTicker(client, tickerToLoad, user.id)
           })()
-          : await getPublicAnalystByTicker(client, activeTicker)
-        const marketActivity = await getFinvizCompanyActivity(client, activeTicker)
+          : await getPublicAnalystByTicker(client, tickerToLoad)
+        const marketActivity = await getFinvizCompanyActivity(client, tickerToLoad)
         let marketNews: Awaited<ReturnType<typeof getFinvizCompanyNews>> = []
         let marketNewsError: string | null = null
         try {
-          marketNews = await getFinvizCompanyNews(client, activeTicker)
+          marketNews = await getFinvizCompanyNews(client, tickerToLoad)
         } catch (newsFetchError) {
           marketNewsError = getErrorMessage(newsFetchError, 'Finviz news request failed.')
         }
 
-        if (!isMounted) return
+        if (!isMounted || tickerToLoad !== activeTickerRef.current) return
         setData(result)
         setFinvizActivity(marketActivity)
         setFinvizNews(marketNews)
         setNewsError(marketNewsError)
       } catch (fetchError) {
-        if (!isMounted) return
+        if (!isMounted || tickerToLoad !== activeTickerRef.current) return
         setError(fetchError instanceof Error ? fetchError.message : 'Unable to load analyst.')
       } finally {
-        if (isMounted) {
-          setLoadedTicker(activeTicker)
+        if (isMounted && tickerToLoad === activeTickerRef.current) {
+          setLoadedTicker(tickerToLoad)
           setLoading(false)
         }
       }
     }
 
+    refreshTickerDataRef.current = (tickerToRefresh) => loadAnalyst(tickerToRefresh)
     setData(null)
     setFinvizActivity({ ratings: [], insiderTrades: [] })
     setFinvizNews([])
@@ -771,6 +768,7 @@ export function AnalystExperienceDisplay({
 
     return () => {
       isMounted = false
+      refreshTickerDataRef.current = null
       void client.removeChannel(channel)
     }
   }, [activeTicker, privateView, session?.user.id])
