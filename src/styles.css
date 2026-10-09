@@ -18,7 +18,7 @@
 
 * {
   box-sizing: border-box;
-  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="22" height="25" viewBox="0 0 22 25"><path d="M1 1l14.2 14.2-4.8 1.4-1.2-3.8-3.7 1-.9 4-4.8-1.4L1 1z" fill="%23000" stroke="%23FFF" stroke-width="1.5"/></svg>'), auto !important;
+  cursor: url('/cursors/normal-select.cur'), auto !important;
 }
 html { scroll-behavior: smooth; }
 body {
@@ -32,7 +32,7 @@ button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: 0.5; }
 a { text-decoration: none; color: inherit; }
 a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
-  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="22" height="25" viewBox="0 0 22 25"><path d="M5.4 1.2c-.3-.4-.8-.6-1.3-.4-.5.2-.8.6-.9 1.1L1.2 11c-.1.3 0 .7.3 1 .2.3.6.4.9.4h2.2l-2.4 6c-.2.5 0 1 .4 1.3.4.2 1 .1 1.3-.3l10-12.2c.3-.4.3-.9 0-1.3-.3-.4-.8-.5-1.3-.3L9 7.3l2-5.1c.2-.5 0-1-.4-1.2-.4-.2-1-.1-1.2.3L5.4 1.2z" fill="%23000" stroke="%23FFF" stroke-width="1.2"/></svg>'), pointer !important;
+  cursor: url('/cursors/link-select.cur'), pointer !important;
 }
 
 .terminal-loader {

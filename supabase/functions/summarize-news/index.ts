@@ -1,10 +1,13 @@
 import { load } from 'https://esm.sh/cheerio@1.0.0'
+import { extractFromHtml } from 'jsr:@extractus/article-extractor@9.0.1'
 import { errorResponse, handleOptions, ok, readJson } from '../_shared/response.ts'
 import { createBackendClient } from '../_shared/supabase.ts'
 
 const MAX_ARTICLE_BYTES = 1_000_000
 const MAX_ARTICLE_TEXT_LENGTH = 40_000
 const ARTICLE_TIMEOUT_MS = 15_000
+const READER_TIMEOUT_MS = 20_000
+const MICROLINK_TIMEOUT_MS = 15_000
 const OPENAI_TIMEOUT_MS = 30_000
 const SUMMARY_PROMPT = 'You are an elite equity research analyst. Generate a concise 2-3 sentence executive brief using ONLY the provided source text. Preserve specific financial metrics and concrete numbers stated in the source. NEVER guess, infer, or hallucinate metrics or add external context. If the text is just a headline, summarize exactly what the headline says without adding external context. NEVER use phrases like "The headline suggests...". Write with an authoritative financial tone.'
 const IRRELEVANT_SUMMARY = 'REJECTED: Irrelevant'
@@ -12,7 +15,7 @@ const BLOCKED_PAGE_PATTERN = /\b(?:captcha|enable javascript|cloudflare|are you 
 const SCRAPER_USER_AGENT = 'MarketMoleNewsBrief/1.0'
 
 type ArticleFetchResult =
-  | { text: string; fallbackReason: null }
+  | { text: string; source: 'jina' | 'microlink' | 'article'; fallbackReason: string | null }
   | { text: null; fallbackReason: string }
 
 function validateArticleUrl(value: string): URL {
@@ -44,7 +47,113 @@ function validateArticleUrl(value: string): URL {
   return url
 }
 
-async function fetchArticle(url: URL): Promise<ArticleFetchResult> {
+async function readBoundedResponse(response: Response): Promise<string | null> {
+  const declaredLength = Number(response.headers.get('content-length'))
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_ARTICLE_BYTES) return null
+  const reader = response.body?.getReader()
+  if (!reader) return null
+  const chunks: Uint8Array[] = []
+  let totalBytes = 0
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    totalBytes += value.byteLength
+    if (totalBytes > MAX_ARTICLE_BYTES) {
+      await reader.cancel()
+      return null
+    }
+    chunks.push(value)
+  }
+  const bytes = new Uint8Array(totalBytes)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.length
+  }
+  return new TextDecoder().decode(bytes).trim()
+}
+
+function normalizeArticleText(value: string): string | null {
+  const text = value.replace(/\r/g, '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+  if (text.length < 100 || BLOCKED_PAGE_PATTERN.test(text.slice(0, 20_000))) return null
+  return text.slice(0, MAX_ARTICLE_TEXT_LENGTH)
+}
+
+async function fetchFromJina(url: URL): Promise<ArticleFetchResult> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), READER_TIMEOUT_MS)
+
+  try {
+    const readerUrl = `https://r.jina.ai/${url.toString()}`
+    const response = await fetch(readerUrl, {
+      headers: {
+        Accept: 'text/plain',
+        'X-Return-Format': 'markdown',
+        'User-Agent': SCRAPER_USER_AGENT,
+      },
+      signal: controller.signal,
+    })
+    if (!response.ok) return { text: null, fallbackReason: `jina_http_${response.status}` }
+    const text = await readBoundedResponse(response)
+    if (!text) return { text: null, fallbackReason: 'jina_response_too_large_or_empty' }
+    const articleText = normalizeArticleText(text)
+    if (!articleText) return { text: null, fallbackReason: 'jina_article_text_too_short_or_blocked' }
+    return { text: articleText, source: 'jina', fallbackReason: null }
+  } catch (error) {
+    const fallbackReason = error instanceof DOMException && error.name === 'AbortError' ? 'jina_timeout' : 'jina_fetch_failed'
+    return { text: null, fallbackReason }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+async function fetchFromMicrolink(url: URL): Promise<ArticleFetchResult> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), MICROLINK_TIMEOUT_MS)
+
+  try {
+    const endpoint = new URL('https://api.microlink.io/')
+    endpoint.searchParams.set('url', url.toString())
+    endpoint.searchParams.set('data.content.selector', 'article')
+    endpoint.searchParams.set('data.content.attr', 'innerText')
+    const response = await fetch(endpoint, {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': SCRAPER_USER_AGENT,
+      },
+      signal: controller.signal,
+    })
+    if (!response.ok) return { text: null, fallbackReason: `microlink_http_${response.status}` }
+    const responseText = await readBoundedResponse(response)
+    if (!responseText) return { text: null, fallbackReason: 'microlink_response_too_large_or_empty' }
+
+    let payload: unknown
+    try {
+      payload = JSON.parse(responseText)
+    } catch {
+      return { text: null, fallbackReason: 'microlink_invalid_json' }
+    }
+    if (!payload || typeof payload !== 'object' || !('data' in payload)) {
+      return { text: null, fallbackReason: 'microlink_invalid_response' }
+    }
+    const data = payload.data
+    if (!data || typeof data !== 'object' || !('content' in data) || typeof data.content !== 'string') {
+      return { text: null, fallbackReason: 'microlink_content_unavailable' }
+    }
+    const articleText = normalizeArticleText(data.content)
+    if (!articleText) return { text: null, fallbackReason: 'microlink_article_text_too_short_or_blocked' }
+    return { text: articleText, source: 'microlink', fallbackReason: null }
+  } catch (error) {
+    const fallbackReason = error instanceof DOMException && error.name === 'AbortError'
+      ? 'microlink_timeout'
+      : 'microlink_fetch_failed'
+    return { text: null, fallbackReason }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+async function fetchWithOpenSourceExtractor(url: URL): Promise<ArticleFetchResult> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), ARTICLE_TIMEOUT_MS)
 
@@ -54,57 +163,63 @@ async function fetchArticle(url: URL): Promise<ArticleFetchResult> {
         Accept: 'text/html,application/xhtml+xml',
         'User-Agent': SCRAPER_USER_AGENT,
       },
+      redirect: 'manual',
       signal: controller.signal,
     })
     if (!response.ok) return { text: null, fallbackReason: `article_http_${response.status}` }
-    const declaredLength = Number(response.headers.get('content-length'))
-    if (Number.isFinite(declaredLength) && declaredLength > MAX_ARTICLE_BYTES) {
-      return { text: null, fallbackReason: 'article_too_large' }
+    const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
+    if (!contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) {
+      return { text: null, fallbackReason: 'article_not_html' }
     }
-
-    const reader = response.body?.getReader()
-    if (!reader) return { text: null, fallbackReason: 'empty_jina_response' }
-    const chunks: Uint8Array[] = []
-    let totalBytes = 0
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      totalBytes += value.byteLength
-      if (totalBytes > MAX_ARTICLE_BYTES) {
-        await reader.cancel()
-        return { text: null, fallbackReason: 'article_too_large' }
-      }
-      chunks.push(value)
-    }
-    const bytes = new Uint8Array(totalBytes)
-    let offset = 0
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset)
-      offset += chunk.length
-    }
-    const html = new TextDecoder().decode(bytes)
-
+    const html = await readBoundedResponse(response)
+    if (!html) return { text: null, fallbackReason: 'article_too_large_or_empty' }
     if (BLOCKED_PAGE_PATTERN.test(html.slice(0, 20_000))) {
       return { text: null, fallbackReason: 'anti_bot_page' }
     }
+    const extracted = await extractFromHtml(html, url.toString(), { contentLengthThreshold: 100 })
+    const content = extracted?.content ? load(extracted.content).text() : ''
+    const articleText = normalizeArticleText(content)
+    if (articleText) return { text: articleText, source: 'article', fallbackReason: null }
+
     const $ = load(html)
     $('script, style, noscript, nav, footer, aside, form, [role="banner"], [role="navigation"], [class*="advert"], [id*="advert"], [class*="disclaimer"], [id*="disclaimer"]').remove()
     const paragraphs = $('article p, main p').toArray().length > 0
       ? $('article p, main p').toArray()
       : $('p').toArray()
-    const text = [...new Set(paragraphs
+    const paragraphText = paragraphs
       .filter((paragraph) => !$(paragraph).closest('footer, aside, [class*="advert"], [id*="advert"], [class*="disclaimer"], [id*="disclaimer"], [class*="boilerplate"], [id*="boilerplate"]').length)
       .map((paragraph) => $(paragraph).text().replace(/\s+/g, ' ').trim())
-      .filter((paragraph) => paragraph.length > 0 && !BLOCKED_PAGE_PATTERN.test(paragraph)))]
+      .filter((paragraph) => paragraph.length > 0 && !BLOCKED_PAGE_PATTERN.test(paragraph))
       .join('\n')
-      .trim()
-    if (text.length < 100) return { text: null, fallbackReason: 'article_text_too_short' }
-    return { text: text.slice(0, MAX_ARTICLE_TEXT_LENGTH), fallbackReason: null }
+    const fallbackText = normalizeArticleText(paragraphText)
+    return fallbackText
+      ? { text: fallbackText, source: 'article', fallbackReason: null }
+      : { text: null, fallbackReason: 'article_text_too_short' }
   } catch (error) {
-    const fallbackReason = error instanceof DOMException && error.name === 'AbortError' ? 'fetch_timeout' : 'fetch_failed'
+    const fallbackReason = error instanceof DOMException && error.name === 'AbortError' ? 'article_timeout' : 'article_extraction_failed'
     return { text: null, fallbackReason }
   } finally {
     clearTimeout(timeout)
+  }
+}
+
+async function fetchArticle(url: URL): Promise<ArticleFetchResult> {
+  const jinaResult = await fetchFromJina(url)
+  if (jinaResult.text) return jinaResult
+  const microlinkResult = await fetchFromMicrolink(url)
+  if (microlinkResult.text) {
+    return { ...microlinkResult, fallbackReason: jinaResult.fallbackReason }
+  }
+  const extractorResult = await fetchWithOpenSourceExtractor(url)
+  if (extractorResult.text) {
+    return {
+      ...extractorResult,
+      fallbackReason: `${jinaResult.fallbackReason};${microlinkResult.fallbackReason}`,
+    }
+  }
+  return {
+    text: null,
+    fallbackReason: `${jinaResult.fallbackReason};${microlinkResult.fallbackReason};${extractorResult.fallbackReason}`,
   }
 }
 
@@ -222,7 +337,7 @@ Deno.serve(async (request) => {
     if (cacheError || !savedArticle) throw new Error('SUMMARY_CACHE_SAVE_FAILED')
     return ok({
       summary,
-      source: article.text ? 'article' : 'headline',
+      source: article.text ? article.source : 'headline',
       cached: false,
     }, request)
   } catch (error) {
