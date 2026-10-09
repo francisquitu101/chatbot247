@@ -5,7 +5,8 @@ import { normalizeTicker } from '../_shared/scraper.ts'
 import { createBackendClient, requireAuthenticatedUser } from '../_shared/supabase.ts'
 
 Deno.serve(async (request) => {
-  const options = handleOptions(request); if (options) return options
+  const optionsResponse = handleOptions(request)
+  if (optionsResponse) return optionsResponse
   const startedAt = Date.now()
   try {
     if (request.method !== 'POST') return errorResponse('METHOD_NOT_ALLOWED', 'Use POST', 405, request)

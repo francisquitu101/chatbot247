@@ -13,8 +13,8 @@ async function authorizeRequest(request: Request): Promise<void> {
 }
 
 Deno.serve(async (request) => {
-  const options = handleOptions(request)
-  if (options) return options
+  const optionsResponse = handleOptions(request)
+  if (optionsResponse) return optionsResponse
   const startedAt = Date.now()
   let ticker = ''
   try {

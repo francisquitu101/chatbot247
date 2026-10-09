@@ -3,8 +3,8 @@ import { errorResponse, handleOptions, ok, readJson } from '../_shared/response.
 import { normalizeTicker } from '../_shared/scraper.ts'
 
 Deno.serve(async (request) => {
-  const options = handleOptions(request)
-  if (options) return options
+  const optionsResponse = handleOptions(request)
+  if (optionsResponse) return optionsResponse
   if (request.method !== 'POST') return errorResponse('METHOD_NOT_ALLOWED', 'Use POST', 405, request)
 
   try {
