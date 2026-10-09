@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { ArrowRight, Brain, ChartColumnIncreasing, Chrome, Crown, Download, ExternalLink, FileText, FolderOpen, LogOut, Newspaper, Plus, RefreshCw, Star, TrendingUp } from 'lucide-react'
 import { Navbar } from '../components/Navbar'
@@ -44,13 +44,13 @@ function formatFinvizTimestamp(value: string | null | undefined) {
 
 function formatTerminalTimestamp(value: string | null | undefined) {
   if (!value) return '—'
-  const dateOnly = value.match(/^(\d{4}-\d{2}-\d{2})$/)
-  const date = new Date(dateOnly ? `${dateOnly[1]}T00:00:00Z` : value)
+  const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '—'
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    timeZone: dateOnly ? 'UTC' : 'America/New_York',
+  return new Intl.DateTimeFormat('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
   }).format(date)
 }
 
@@ -146,18 +146,19 @@ const EMPTY_STATE_COPY: Record<Exclude<AnalystApp, 'chart'>, string> = {
 }
 
 const EMPTY_STATE_DESCRIPTION = 'Data will appear here once the background extraction finishes.'
+const SAMPLE_ENTRIES: Record<Exclude<AnalystApp, 'chart'>, string[]> = {
+  sec: ['SAMPLE 8-K filing card', 'SAMPLE 10-Q filing card'],
+  insider: ['SAMPLE Form 4 transaction card'],
+  ratings: ['SAMPLE analyst rating card'],
+  news: ['SAMPLE market headline card'],
+  analysis: ['SAMPLE market analysis card'],
+}
 
 type NewsBriefing =
   | { status: 'loading' }
   | { status: 'success'; summary: string }
   | { status: 'irrelevant' }
   | { status: 'error' }
-
-const TERMINAL_IDLE_MESSAGES = [
-  '[SYS] Monitoring data streams...',
-  '[SYS] Decrypting market noise...',
-  '[SYS] Watching for new filings and insider activity...',
-]
 
 type GlobalTickerAnalysis = {
   ticker: string
@@ -189,6 +190,32 @@ function getExternalHttpUrl(value: string): string | null {
   } catch {
     return null
   }
+}
+
+function SampleDataPreview({
+  ticker,
+  emptyMessage,
+  entries,
+}: {
+  ticker: string
+  emptyMessage: string
+  entries: string[]
+}) {
+  return (
+    <div className="luna-sample-preview" role="status">
+      <p className="luna-sample-preview-label">SAMPLE PREVIEW · NOT LIVE DATA</p>
+      <strong>{emptyMessage} {ticker}.</strong>
+      <span className="luna-sample-preview-description">{EMPTY_STATE_DESCRIPTION}</span>
+      <div className="luna-sample-preview-list">
+        {entries.map((entry) => (
+          <article className="luna-sample-preview-item" key={entry}>
+            <span>{entry}</span>
+            <small>Illustrative placeholder · awaiting verified source data</small>
+          </article>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 function getFilingType(evidence: { title?: string | null; raw_metadata?: Record<string, unknown> | null } | null): string | null {
@@ -236,9 +263,8 @@ export function AnalystExperienceDisplay({
   const [data, setData] = useState<Awaited<ReturnType<typeof getPublicAnalystByTicker>> | null>(null)
   const [finvizActivity, setFinvizActivity] = useState<Awaited<ReturnType<typeof getFinvizCompanyActivity>>>({ ratings: [], insiderTrades: [] })
   const [finvizNews, setFinvizNews] = useState<Awaited<ReturnType<typeof getFinvizCompanyNews>>>([])
-  const [terminalActivity, setTerminalActivity] = useState<TerminalActivityEvent[]>([])
+  const [terminalHistory, setTerminalHistory] = useState<Record<string, TerminalActivityEvent[]>>({})
   const [terminalActivityErrors, setTerminalActivityErrors] = useState<string[]>([])
-  const [terminalIdleIndex, setTerminalIdleIndex] = useState(0)
   const [tickerExtraction, setTickerExtraction] = useState<Record<string, TickerExtractionState>>({})
   const [watchlist, setWatchlist] = useState<string[]>([(ticker ?? 'NVDA').toUpperCase()])
   const [watchlistInput, setWatchlistInput] = useState('')
@@ -335,12 +361,29 @@ export function AnalystExperienceDisplay({
     }
   }, [sessionUserId])
 
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setTerminalIdleIndex((current) => (current + 1) % TERMINAL_IDLE_MESSAGES.length)
-    }, 6_000)
-    return () => window.clearInterval(intervalId)
+  const appendTerminalEvents = useCallback((eventTicker: string, events: TerminalActivityEvent[]) => {
+    if (events.length === 0) return
+    setTerminalHistory((current) => {
+      const existing = current[eventTicker] ?? []
+      const knownIds = new Set(existing.map((event) => event.id))
+      const additions = events.filter((event) => !knownIds.has(event.id))
+      if (additions.length === 0) return current
+      return {
+        ...current,
+        [eventTicker]: [...existing, ...additions]
+          .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp))
+          .slice(-200),
+      }
+    })
   }, [])
+
+  const appendTerminalLog = useCallback((eventTicker: string, message: string) => {
+    appendTerminalEvents(eventTicker, [{
+      id: `${eventTicker}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      timestamp: new Date().toISOString(),
+      message,
+    }])
+  }, [appendTerminalEvents])
 
   async function handleUpgradeToPro() {
     if (!supabase || !session || checkoutBusy) return
@@ -393,7 +436,9 @@ export function AnalystExperienceDisplay({
 
   async function startTickerExtraction(nextTicker: string) {
     const client = supabase
+    appendTerminalLog(nextTicker, `[SYS] Connecting to SEC EDGAR database for ${nextTicker}...`)
     if (!client || !session) {
+      appendTerminalLog(nextTicker, '[SYS] Sign in is required before live ticker extraction can start.')
       setTickerExtraction((current) => ({
         ...current,
         [nextTicker]: { status: 'error', step: 0, message: 'Sign in to start data extraction for this ticker.' },
@@ -422,6 +467,7 @@ export function AnalystExperienceDisplay({
       const hasExistingData = [scrapedResult.count, ratingsResult.count, insiderResult.count, evidenceResult.count]
         .some((count) => (count ?? 0) > 0)
       if (hasExistingData) {
+        appendTerminalLog(nextTicker, `[SYS] Existing market data found for ${nextTicker}; skipping initial extraction.`)
         setTickerExtraction((current) => ({
           ...current,
           [nextTicker]: { status: 'complete', step: -1, message: `Market data for ${nextTicker} is already available.` },
@@ -437,6 +483,7 @@ export function AnalystExperienceDisplay({
       const trackedTicker = await updateWatchlist('enable', nextTicker, accessToken)
       if (!trackedTicker) throw new Error(`Could not enable ${nextTicker} for background extraction.`)
 
+      appendTerminalLog(nextTicker, '[SYS] Extracting latest 8-K and 10-Q filings...')
       updateProgress(1)
       const { data: secResponse, error: secError } = await client.functions.invoke<{
         success: boolean
@@ -446,7 +493,9 @@ export function AnalystExperienceDisplay({
       if (secResponse?.success !== true) {
         throw new Error(secResponse?.error?.message ?? `SEC extraction failed for ${nextTicker}.`)
       }
+      appendTerminalLog(nextTicker, `[SYS] SEC filing extraction completed for ${nextTicker}.`)
 
+      appendTerminalLog(nextTicker, '[SYS] Aggregating market news and insider forms...')
       updateProgress(2)
       const { data: finvizResponse, error: finvizError } = await client.functions.invoke<{
         success: boolean
@@ -456,6 +505,7 @@ export function AnalystExperienceDisplay({
       if (finvizResponse?.success !== true) {
         throw new Error(finvizResponse?.error?.message ?? `Market news and insider extraction failed for ${nextTicker}.`)
       }
+      appendTerminalLog(nextTicker, `[SYS] Market news and insider extraction completed for ${nextTicker}.`)
 
       const { data: enqueueResponse, error: enqueueError } = await client.functions.invoke<{
         success: boolean
@@ -463,17 +513,20 @@ export function AnalystExperienceDisplay({
         error?: { message?: string }
       }>('enqueue-sec-analysis', { body: { ticker: nextTicker } })
       if (!enqueueError && enqueueResponse?.success === true && enqueueResponse.data?.job_id) {
+        appendTerminalLog(nextTicker, '[SYS] Running AI sentiment analysis. This may take a minute...')
         updateProgress(3)
         const { error: analysisError } = await client.functions.invoke('process-analyst-job', {
           body: { job_id: enqueueResponse.data.job_id },
         })
         if (analysisError) {
+          appendTerminalLog(nextTicker, `[SYS] AI analysis request failed: ${getErrorMessage(analysisError, 'analysis request failed')}`)
           setTickerExtraction((current) => ({
             ...current,
             [nextTicker]: { status: 'complete', step: 3, message: `Data extraction finished; AI analysis could not start: ${getErrorMessage(analysisError, 'analysis request failed')}` },
           }))
           return
         }
+        appendTerminalLog(nextTicker, `[SYS] AI analysis completed for ${nextTicker}.`)
       } else {
         const detail = enqueueError
           ? getErrorMessage(enqueueError, 'analysis job could not be queued')
@@ -482,6 +535,7 @@ export function AnalystExperienceDisplay({
           ...current,
           [nextTicker]: { status: 'complete', step: 2, message: `Data extraction finished; ${detail}` },
         }))
+        appendTerminalLog(nextTicker, `[SYS] Data collection finished for ${nextTicker}; ${detail}`)
         return
       }
 
@@ -491,6 +545,7 @@ export function AnalystExperienceDisplay({
       }))
     } catch (extractionError) {
       const message = getErrorMessage(extractionError, `Unable to extract data for ${nextTicker}.`)
+      appendTerminalLog(nextTicker, `[SYS] Extraction failed for ${nextTicker}: ${message}`)
       setTickerExtraction((current) => ({
         ...current,
         [nextTicker]: { status: 'error', step: current[nextTicker]?.step ?? 0, message },
@@ -727,7 +782,6 @@ export function AnalystExperienceDisplay({
     const client = supabase
     const analystId = data?.analyst.id
     if (!client || !analystId) {
-      setTerminalActivity([])
       setTerminalActivityErrors([])
       return
     }
@@ -737,7 +791,7 @@ export function AnalystExperienceDisplay({
       try {
         const activity = await getLatestTerminalActivity(client, activeTicker, analystId)
         if (!isMounted) return
-        setTerminalActivity(activity.events)
+        appendTerminalEvents(activeTicker, activity.events)
         setTerminalActivityErrors(activity.errors)
       } catch (activityError) {
         if (!isMounted) return
@@ -760,7 +814,7 @@ export function AnalystExperienceDisplay({
       window.clearInterval(intervalId)
       void client.removeChannel(channel)
     }
-  }, [activeTicker, data?.analyst.id])
+  }, [activeTicker, appendTerminalEvents, data?.analyst.id])
 
   const evidenceList = getRealEvidence(data?.evidenceItems)
   const processingStatus = typeof data?.state?.processing_status === 'string' ? data.state.processing_status : 'idle'
@@ -769,6 +823,7 @@ export function AnalystExperienceDisplay({
   const isStaleProcessingState = processingStatus === 'analyzing' && !hasActiveRun && !hasProcessingJob
   const statusLabel = isStaleProcessingState ? '' : getStatusLabel(processingStatus)
   const statusTone = statusLabel === 'ERROR' ? 'error' : 'active'
+  const currentTerminalHistory = terminalHistory[activeTicker] ?? []
   const desktopSources = [
     { id: 'chart' as const, label: 'Price Chart', Icon: TrendingUp },
     { id: 'sec' as const, label: 'SEC Filings', Icon: FolderOpen },
@@ -881,24 +936,19 @@ export function AnalystExperienceDisplay({
             )}
           </>
         )}
-        {terminalActivity.map((event) => (
+        {currentTerminalHistory.map((event) => (
           <p key={event.id}>
-            <span>&gt;</span> [{formatTerminalTimestamp(event.timestamp)}] {event.message}
+            <span>[{formatTerminalTimestamp(event.timestamp)}]</span> &gt; {event.message}
           </p>
         ))}
         {loading && <p className="luna-terminal-system"><span>&gt;</span> [SYS] Loading analyst data...</p>}
         {error && <p className="luna-terminal-error"><span>&gt;</span> Feed unavailable: {error}</p>}
-        {terminalActivity.length === 0 && terminalActivityErrors.length === 0 && data && !loading && (
+        {currentTerminalHistory.length === 0 && terminalActivityErrors.length === 0 && data && !loading && (
           <p className="luna-terminal-empty"><span>&gt;</span> Awaiting market activity...</p>
         )}
         {terminalActivityErrors.map((message) => (
-          <p className="luna-terminal-error" key={message}><span>&gt;</span> Feed unavailable: {message}</p>
+          <p className="luna-terminal-error" key={message}><span>[{formatTerminalTimestamp(new Date().toISOString())}]</span> &gt; Feed unavailable: {message}</p>
         ))}
-        {data && (
-          <p className="luna-terminal-system" key={`system-${terminalIdleIndex}`}>
-            <span>&gt;</span> {TERMINAL_IDLE_MESSAGES[terminalIdleIndex]}
-          </p>
-        )}
         <div className="luna-terminal-cursor" aria-hidden="true" />
       </div>
     </aside>
@@ -939,11 +989,7 @@ export function AnalystExperienceDisplay({
               </main>
             ) : (
               <main className="luna-data-view luna-sec-explorer">
-                <div className="luna-placeholder-state">
-                  {activeApp === 'insider' ? <ChartColumnIncreasing size={26} /> : activeApp === 'ratings' ? <Star size={26} /> : activeApp === 'news' ? <Newspaper size={26} /> : <FolderOpen size={28} />}
-                  <strong>{loading ? `Loading ${activeTitle.toLowerCase()} for ${activeTicker}...` : `${EMPTY_STATE_COPY[activeApp]} ${activeTicker}.`}</strong>
-                  <span>{error ?? EMPTY_STATE_DESCRIPTION}</span>
-                </div>
+                <SampleDataPreview ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY[activeApp]} entries={SAMPLE_ENTRIES[activeApp]} />
               </main>
             )}
           </section>
@@ -1047,11 +1093,7 @@ export function AnalystExperienceDisplay({
         {activeApp === 'sec' && (
           <main className="luna-data-view luna-sec-explorer">
             {secFiles.length === 0 ? (
-              <div className="luna-placeholder-state">
-                <FolderOpen size={28} />
-                <strong>{EMPTY_STATE_COPY.sec} {activeTicker}.</strong>
-                <span>{EMPTY_STATE_DESCRIPTION}</span>
-              </div>
+              <SampleDataPreview ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.sec} entries={SAMPLE_ENTRIES.sec} />
             ) : (
               <div className="luna-sec-grid">
                 {secFiles.map((file) => {
@@ -1083,11 +1125,7 @@ export function AnalystExperienceDisplay({
         {activeApp === 'insider' && (
           <main className="luna-data-view">
             {finvizActivity.insiderTrades.length === 0 ? (
-              <div className="luna-placeholder-state">
-                <ChartColumnIncreasing size={26} />
-                <strong>{session ? `${EMPTY_STATE_COPY.insider} ${activeTicker}.` : 'Sign in to view insider transactions'}</strong>
-                <span>{session ? EMPTY_STATE_DESCRIPTION : 'Finviz market data is available to authenticated users.'}</span>
-              </div>
+              <SampleDataPreview ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.insider} entries={SAMPLE_ENTRIES.insider} />
             ) : (
               <div className="luna-table-scroll">
                 <table className="luna-financial-table luna-insider-table">
@@ -1137,11 +1175,7 @@ export function AnalystExperienceDisplay({
         {activeApp === 'ratings' && (
           <main className="luna-data-view">
             {finvizActivity.ratings.length === 0 ? (
-              <div className="luna-placeholder-state">
-                <Star size={26} />
-                <strong>{session ? `${EMPTY_STATE_COPY.ratings} ${activeTicker}.` : 'Sign in to view analyst ratings'}</strong>
-                <span>{session ? EMPTY_STATE_DESCRIPTION : 'Finviz market data is available to authenticated users.'}</span>
-              </div>
+              <SampleDataPreview ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.ratings} entries={SAMPLE_ENTRIES.ratings} />
             ) : (
               <div className="luna-table-scroll">
                 <table className="luna-financial-table luna-ratings-table">
@@ -1188,9 +1222,7 @@ export function AnalystExperienceDisplay({
               </div>
             ) : finvizNews.length === 0 ? (
               <div className="luna-news-empty">
-                <Newspaper size={25} />
-                <strong>{EMPTY_STATE_COPY.news} {activeTicker}.</strong>
-                <span>{EMPTY_STATE_DESCRIPTION}</span>
+                <SampleDataPreview ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.news} entries={SAMPLE_ENTRIES.news} />
               </div>
             ) : (
               <div className="luna-news-list">
@@ -1309,11 +1341,7 @@ export function AnalystExperienceDisplay({
               {globalAnalysisError && <p className="global-analysis-error" role="alert">{globalAnalysisError}</p>}
               {globalAnalysisBusy && <p className="global-analysis-loading" role="status">&gt; Aggregating news, SEC filings, insider trades &amp; ratings...</p>}
               {!globalAnalysisBusy && globalAnalysis?.ticker !== activeTicker && (
-                <div className="luna-placeholder-state">
-                  <Brain size={26} />
-                  <strong>{EMPTY_STATE_COPY.analysis} {activeTicker}.</strong>
-                  <span>{EMPTY_STATE_DESCRIPTION}</span>
-                </div>
+                <SampleDataPreview ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.analysis} entries={SAMPLE_ENTRIES.analysis} />
               )}
               {globalAnalysis?.ticker === activeTicker && (
                 <>

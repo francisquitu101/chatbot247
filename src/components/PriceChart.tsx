@@ -15,25 +15,59 @@ type ChartPayload = {
   currency: string
 }
 
+function buildSampleCandles(ticker: string): CandlestickData<UTCTimestamp>[] {
+  const seed = [...ticker].reduce((value, character) => (value * 31 + character.charCodeAt(0)) >>> 0, 7)
+  let previousClose = 45 + (seed % 180)
+  const candles: CandlestickData<UTCTimestamp>[] = []
+  const today = new Date()
+
+  for (let dayOffset = 120; dayOffset >= 0; dayOffset -= 1) {
+    const date = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - dayOffset))
+    if (date.getUTCDay() === 0 || date.getUTCDay() === 6) continue
+    const index = candles.length + seed
+    const change = Math.sin(index * 0.39) * 1.8 + Math.cos(index * 0.13) * 0.9
+    const open = previousClose
+    const close = Math.max(1, open + change)
+    const spread = 0.4 + ((index * 17) % 100) / 100
+    candles.push({
+      time: Math.floor(date.getTime() / 1000) as UTCTimestamp,
+      open,
+      high: Math.max(open, close) + spread,
+      low: Math.max(0.01, Math.min(open, close) - spread),
+      close,
+    })
+    previousClose = close
+  }
+
+  return candles
+}
+
 export function PriceChart({ ticker }: { ticker: string }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [candles, setCandles] = useState<CandlestickData<UTCTimestamp>[]>([])
   const [currency, setCurrency] = useState('USD')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [sampleMessage, setSampleMessage] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
     setLoading(true)
     setError(null)
     setCandles([])
+    setSampleMessage(null)
+
+    const showSampleChart = (reason: string) => {
+      if (!active) return
+      setCandles(buildSampleCandles(ticker))
+      setCurrency('DEMO')
+      setSampleMessage(reason)
+      setLoading(false)
+    }
 
     const loadChart = async () => {
       if (!supabase) {
-        if (active) {
-          setError('Price history is unavailable because Supabase is not configured.')
-          setLoading(false)
-        }
+        showSampleChart('Live price history is unavailable; this simulated chart is for layout preview only.')
         return
       }
 
@@ -44,8 +78,7 @@ export function PriceChart({ ticker }: { ticker: string }) {
       }>('stock-chart', { body: { ticker } })
       if (!active) return
       if (invokeError || data?.success !== true || !Array.isArray(data.data?.candles)) {
-        setError(data?.error?.message ?? invokeError?.message ?? 'Unable to load price history.')
-        setLoading(false)
+        showSampleChart(`Live price history could not be loaded; this simulated chart is for preview only. ${data?.error?.message ?? invokeError?.message ?? ''}`.trim())
         return
       }
 
@@ -60,7 +93,10 @@ export function PriceChart({ ticker }: { ticker: string }) {
         }))
       setCandles(parsedCandles)
       setCurrency(data.data.currency)
-      if (parsedCandles.length === 0) setError('No price history is available for this ticker.')
+      if (parsedCandles.length === 0) {
+        showSampleChart('No live price history is available; this simulated chart is for preview only.')
+        return
+      }
       setLoading(false)
     }
 
@@ -135,6 +171,11 @@ export function PriceChart({ ticker }: { ticker: string }) {
         </div>
         <span>DAILY · {currency}</span>
       </div>
+      {sampleMessage && (
+        <p className="luna-chart-sample-notice" role="status">
+          SIMULATED PREVIEW · NOT REAL PRICES — {sampleMessage}
+        </p>
+      )}
       {loading && <div className="luna-chart-state" role="status">Loading price history…</div>}
       {!loading && error && <div className="luna-chart-state luna-chart-error" role="status">{error}</div>}
       <div ref={containerRef} className="luna-price-chart-canvas" hidden={loading || Boolean(error)} />

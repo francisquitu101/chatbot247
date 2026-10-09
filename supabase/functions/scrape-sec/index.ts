@@ -1,5 +1,6 @@
 import { scrapeSecFilings } from './scraper.ts'
-import { assertTrackedTicker, saveSecScrapedItems } from '../_shared/repository.ts'
+import { fetchFinvizLatestFilings } from './finviz-fallback.ts'
+import { assertTrackedTicker, resolveSourceId, saveSecScrapedItems } from '../_shared/repository.ts'
 import { errorResponse, handleOptions, ok, readJson } from '../_shared/response.ts'
 import { normalizeTicker } from '../_shared/scraper.ts'
 import { requireAuthenticatedUser } from '../_shared/supabase.ts'
@@ -26,6 +27,33 @@ Deno.serve(async (request) => {
     await assertTrackedTicker(ticker)
     console.info(JSON.stringify({ event: 'sec_started', ticker }))
     const scrape = await scrapeSecFilings(ticker)
+    const sourceId = await resolveSourceId('sec')
+    const finvizFilings = await fetchFinvizLatestFilings(
+      ticker,
+      sourceId,
+      scrape.cutoffDate,
+      new Date().toISOString().slice(0, 10),
+    )
+    const knownAccessions = new Set(
+      scrape.items
+        .map((item) => item.metadata.accessionNumber)
+        .filter((accession): accession is string => typeof accession === 'string'),
+    )
+    const uniqueFallbackFilings = finvizFilings.filter((item) => {
+      const accession = item.metadata.accessionNumber
+      if (typeof accession !== 'string' || knownAccessions.has(accession)) return false
+      knownAccessions.add(accession)
+      return true
+    })
+    scrape.items.push(...uniqueFallbackFilings)
+    scrape.totalCandidates += uniqueFallbackFilings.length
+    if (uniqueFallbackFilings.length) {
+      console.info(JSON.stringify({
+        event: 'sec_finviz_filings_fallback_added',
+        ticker,
+        count: uniqueFallbackFilings.length,
+      }))
+    }
     const persistence = await saveSecScrapedItems(scrape.items)
     const result = {
       source: 'SEC', ticker, found: scrape.items.length, cutoffDate: scrape.cutoffDate,
