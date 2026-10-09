@@ -9,7 +9,7 @@ const ARTICLE_TIMEOUT_MS = 15_000
 const SEARCH_TIMEOUT_MS = 10_000
 const OPENAI_TIMEOUT_MS = 30_000
 const SUMMARY_PROMPT = 'You are an elite equity research analyst. Generate a concise 2-3 sentence executive brief based on the provided text. CRITICAL: You MUST extract and include specific financial metrics, percentages, revenue figures, stock ticker movements, and concrete numbers mentioned in the text. Do not provide a vague summary; anchor your analysis in the hard data provided. Focus on the impact on the company or market.'
-const IRRELEVANT_SUMMARY = 'REJECTED: Irrelevant to ticker.'
+const IRRELEVANT_SUMMARY = 'REJECTED: Irrelevant'
 const BLOCKED_PAGE_PATTERN = /\b(?:captcha|enable javascript|cloudflare|are you a robot|verify (?:that )?you are human|access denied|checking your browser|automated requests)\b/i
 const SCRAPER_USER_AGENT = 'MarketMoleNewsBrief/1.0'
 
@@ -193,7 +193,7 @@ async function summarizeWithOpenAI(
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS)
   try {
-    const relevanceRule = `The target is ${ticker} (${companyName}). If the article is not primarily about ${ticker} or ${companyName}, return EXACTLY: "${IRRELEVANT_SUMMARY}" Do not add any other text.`
+    const relevanceRule = `You are a financial analyst. The target is ${ticker} (${companyName}). ONLY reject the article with "${IRRELEVANT_SUMMARY}" if it is 100% spam, an advertisement, or has absolutely zero relation to ${ticker} or ${companyName}. If the article mentions ${ticker} or ${companyName} as part of a fund's holdings, market trends, or compares it to other stocks, IT IS RELEVANT. Summarize the hard data. Return exactly "${IRRELEVANT_SUMMARY}" only for rejected articles.`
     const systemPrompt = articleText || snippets.length > 0
       ? `${SUMMARY_PROMPT} ${relevanceRule}`
       : `You are a financial analyst. We could not extract the full article due to paywalls. Based ONLY on the headline provided in the user message, generate a 1-2 sentence brief on what this likely implies for the market or the company. Acknowledge this is based on the headline. ${relevanceRule}`
