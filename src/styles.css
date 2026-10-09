@@ -1750,63 +1750,34 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   font-size: 12px;
 }
 
-.luna-sample-preview {
+.luna-data-loading,
+.luna-data-empty {
   display: grid;
-  align-content: start;
-  gap: 12px;
+  justify-items: center;
+  align-content: center;
+  gap: 10px;
   width: min(100%, 720px);
+  min-height: 180px;
   margin: auto;
   padding: 24px;
   color: #64736b;
+  text-align: center;
 }
 
-.luna-sample-preview-label {
-  width: fit-content;
-  margin: 0;
-  padding: 5px 8px;
-  border: 1px solid rgba(231, 167, 102, 0.36);
-  border-radius: 999px;
-  background: rgba(231, 167, 102, 0.12);
-  color: #8a5b2c;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+.luna-data-loading > svg {
+  color: #c37a3a;
+  animation: luna-spin 1s linear infinite;
 }
 
-.luna-sample-preview > strong {
+.luna-data-empty > strong {
   color: #263a30;
   font-size: 15px;
 }
 
-.luna-sample-preview-description {
+.luna-data-loading > span,
+.luna-data-empty > span {
   font-size: 12px;
   line-height: 1.5;
-}
-
-.luna-sample-preview-list {
-  display: grid;
-  gap: 9px;
-}
-
-.luna-sample-preview-item {
-  display: grid;
-  gap: 5px;
-  padding: 12px 14px;
-  border: 1px dashed #d8e1dc;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.62);
-}
-
-.luna-sample-preview-item > span {
-  color: #34433b;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.luna-sample-preview-item small {
-  color: #78847f;
-  font-size: 10px;
 }
 
 .luna-report-view {

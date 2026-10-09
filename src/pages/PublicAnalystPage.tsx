@@ -146,13 +146,6 @@ const EMPTY_STATE_COPY: Record<Exclude<AnalystApp, 'chart'>, string> = {
 }
 
 const EMPTY_STATE_DESCRIPTION = 'Data will appear here once the background extraction finishes.'
-const SAMPLE_ENTRIES: Record<Exclude<AnalystApp, 'chart'>, string[]> = {
-  sec: ['SAMPLE 8-K filing card', 'SAMPLE 10-Q filing card'],
-  insider: ['SAMPLE Form 4 transaction card'],
-  ratings: ['SAMPLE analyst rating card'],
-  news: ['SAMPLE market headline card'],
-  analysis: ['SAMPLE market analysis card'],
-}
 
 type NewsBriefing =
   | { status: 'loading' }
@@ -192,28 +185,26 @@ function getExternalHttpUrl(value: string): string | null {
   }
 }
 
-function SampleDataPreview({
+function DataLoadingState({ ticker }: { ticker: string }) {
+  return (
+    <div className="luna-data-loading" role="status" aria-live="polite">
+      <RefreshCw size={18} className="spinning" aria-hidden="true" />
+      <span>Loading verified data for {ticker}...</span>
+    </div>
+  )
+}
+
+function DataEmptyState({
   ticker,
   emptyMessage,
-  entries,
 }: {
   ticker: string
   emptyMessage: string
-  entries: string[]
 }) {
   return (
-    <div className="luna-sample-preview" role="status">
-      <p className="luna-sample-preview-label">SAMPLE PREVIEW · NOT LIVE DATA</p>
+    <div className="luna-data-empty" role="status">
       <strong>{emptyMessage} {ticker}.</strong>
-      <span className="luna-sample-preview-description">{EMPTY_STATE_DESCRIPTION}</span>
-      <div className="luna-sample-preview-list">
-        {entries.map((entry) => (
-          <article className="luna-sample-preview-item" key={entry}>
-            <span>{entry}</span>
-            <small>Illustrative placeholder · awaiting verified source data</small>
-          </article>
-        ))}
-      </div>
+      <span>{EMPTY_STATE_DESCRIPTION}</span>
     </div>
   )
 }
@@ -261,6 +252,7 @@ export function AnalystExperienceDisplay({
   const [briefingArticleId, setBriefingArticleId] = useState<string | null>(null)
   const [newsBriefings, setNewsBriefings] = useState<Record<string, NewsBriefing>>({})
   const [data, setData] = useState<Awaited<ReturnType<typeof getPublicAnalystByTicker>> | null>(null)
+  const [loadedTicker, setLoadedTicker] = useState<string | null>(null)
   const [finvizActivity, setFinvizActivity] = useState<Awaited<ReturnType<typeof getFinvizCompanyActivity>>>({ ratings: [], insiderTrades: [] })
   const [finvizNews, setFinvizNews] = useState<Awaited<ReturnType<typeof getFinvizCompanyNews>>>([])
   const [terminalHistory, setTerminalHistory] = useState<Record<string, TerminalActivityEvent[]>>({})
@@ -716,6 +708,7 @@ export function AnalystExperienceDisplay({
 
     if (!supabase) {
       setLoading(false)
+      setLoadedTicker(activeTicker)
       setError('Supabase configuration is missing. Add VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.')
       return () => { isMounted = false }
     }
@@ -755,12 +748,16 @@ export function AnalystExperienceDisplay({
         setError(fetchError instanceof Error ? fetchError.message : 'Unable to load analyst.')
       } finally {
         if (isMounted) {
+          setLoadedTicker(activeTicker)
           setLoading(false)
         }
       }
     }
 
     setData(null)
+    setFinvizActivity({ ratings: [], insiderTrades: [] })
+    setFinvizNews([])
+    setLoadedTicker(null)
     void loadAnalyst()
 
     const channel = client
@@ -816,7 +813,10 @@ export function AnalystExperienceDisplay({
     }
   }, [activeTicker, appendTerminalEvents, data?.analyst.id])
 
-  const evidenceList = getRealEvidence(data?.evidenceItems)
+  const isCurrentTickerLoading = loading || loadedTicker !== activeTicker
+  const isTickerExtractionRunning = tickerExtraction[activeTicker]?.status === 'running'
+  const showTickerDataLoader = isCurrentTickerLoading || isTickerExtractionRunning
+  const evidenceList = getRealEvidence(loadedTicker === activeTicker ? data?.evidenceItems : undefined)
   const processingStatus = typeof data?.state?.processing_status === 'string' ? data.state.processing_status : 'idle'
   const hasActiveRun = (data?.runs ?? []).some((run: { status: string }) => run.status === 'started')
   const hasProcessingJob = (data?.jobs ?? []).some((job: { status: string }) => job.status === 'processing')
@@ -954,7 +954,7 @@ export function AnalystExperienceDisplay({
     </aside>
   )
 
-  if (!data || !data.analyst) {
+  if (loadedTicker !== activeTicker || loading || !data || !data.analyst) {
     return (
       <div className="luna-chat-shell">
         <Navbar>{watchlistPanel}</Navbar>
@@ -989,7 +989,11 @@ export function AnalystExperienceDisplay({
               </main>
             ) : (
               <main className="luna-data-view luna-sec-explorer">
-                <SampleDataPreview ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY[activeApp]} entries={SAMPLE_ENTRIES[activeApp]} />
+                {showTickerDataLoader ? (
+                  <DataLoadingState ticker={activeTicker} />
+                ) : (
+                  <DataEmptyState ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY[activeApp]} />
+                )}
               </main>
             )}
           </section>
@@ -1092,8 +1096,10 @@ export function AnalystExperienceDisplay({
 
         {activeApp === 'sec' && (
           <main className="luna-data-view luna-sec-explorer">
-            {secFiles.length === 0 ? (
-              <SampleDataPreview ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.sec} entries={SAMPLE_ENTRIES.sec} />
+            {showTickerDataLoader ? (
+              <DataLoadingState ticker={activeTicker} />
+            ) : secFiles.length === 0 ? (
+              <DataEmptyState ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.sec} />
             ) : (
               <div className="luna-sec-grid">
                 {secFiles.map((file) => {
@@ -1124,8 +1130,10 @@ export function AnalystExperienceDisplay({
 
         {activeApp === 'insider' && (
           <main className="luna-data-view">
-            {finvizActivity.insiderTrades.length === 0 ? (
-              <SampleDataPreview ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.insider} entries={SAMPLE_ENTRIES.insider} />
+            {showTickerDataLoader ? (
+              <DataLoadingState ticker={activeTicker} />
+            ) : finvizActivity.insiderTrades.length === 0 ? (
+              <DataEmptyState ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.insider} />
             ) : (
               <div className="luna-table-scroll">
                 <table className="luna-financial-table luna-insider-table">
@@ -1174,8 +1182,10 @@ export function AnalystExperienceDisplay({
 
         {activeApp === 'ratings' && (
           <main className="luna-data-view">
-            {finvizActivity.ratings.length === 0 ? (
-              <SampleDataPreview ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.ratings} entries={SAMPLE_ENTRIES.ratings} />
+            {showTickerDataLoader ? (
+              <DataLoadingState ticker={activeTicker} />
+            ) : finvizActivity.ratings.length === 0 ? (
+              <DataEmptyState ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.ratings} />
             ) : (
               <div className="luna-table-scroll">
                 <table className="luna-financial-table luna-ratings-table">
@@ -1220,9 +1230,13 @@ export function AnalystExperienceDisplay({
                 <strong>News stream unavailable</strong>
                 <span>{newsError}</span>
               </div>
+            ) : showTickerDataLoader ? (
+              <div className="luna-news-empty">
+                <DataLoadingState ticker={activeTicker} />
+              </div>
             ) : finvizNews.length === 0 ? (
               <div className="luna-news-empty">
-                <SampleDataPreview ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.news} entries={SAMPLE_ENTRIES.news} />
+                <DataEmptyState ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.news} />
               </div>
             ) : (
               <div className="luna-news-list">
@@ -1341,7 +1355,9 @@ export function AnalystExperienceDisplay({
               {globalAnalysisError && <p className="global-analysis-error" role="alert">{globalAnalysisError}</p>}
               {globalAnalysisBusy && <p className="global-analysis-loading" role="status">&gt; Aggregating news, SEC filings, insider trades &amp; ratings...</p>}
               {!globalAnalysisBusy && globalAnalysis?.ticker !== activeTicker && (
-                <SampleDataPreview ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.analysis} entries={SAMPLE_ENTRIES.analysis} />
+                showTickerDataLoader
+                  ? <DataLoadingState ticker={activeTicker} />
+                  : <DataEmptyState ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.analysis} />
               )}
               {globalAnalysis?.ticker === activeTicker && (
                 <>
