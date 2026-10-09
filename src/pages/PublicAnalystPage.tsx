@@ -264,6 +264,7 @@ export function AnalystExperienceDisplay({
   const [watchlistOwner, setWatchlistOwner] = useState<string | null>(null)
   const refreshTickerDataRef = useRef<((tickerToRefresh: string) => Promise<void>) | null>(null)
   const tickerScanTimeoutsRef = useRef<Record<string, number[]>>({})
+  const tickerScanIntervalsRef = useRef<Record<string, number[]>>({})
   const tickerScanIdsRef = useRef<Record<string, number>>({})
   const tickerScanFinishedIdsRef = useRef<Record<string, number>>({})
   const tickerScanSequenceRef = useRef(0)
@@ -276,7 +277,16 @@ export function AnalystExperienceDisplay({
 
   useEffect(() => () => {
     Object.values(tickerScanTimeoutsRef.current).flat().forEach((timeoutId) => window.clearTimeout(timeoutId))
+    Object.values(tickerScanIntervalsRef.current).flat().forEach((intervalId) => window.clearInterval(intervalId))
   }, [])
+
+  useEffect(() => {
+    Object.entries(tickerScanIntervalsRef.current).forEach(([ticker, intervalIds]) => {
+      if (ticker === activeTicker) return
+      intervalIds.forEach((intervalId) => window.clearInterval(intervalId))
+      tickerScanIntervalsRef.current[ticker] = []
+    })
+  }, [activeTicker])
 
   useEffect(() => {
     const nextTicker = (ticker ?? 'NVDA').trim().toUpperCase()
@@ -451,6 +461,8 @@ export function AnalystExperienceDisplay({
 
     for (const timeoutId of tickerScanTimeoutsRef.current[nextTicker] ?? []) window.clearTimeout(timeoutId)
     tickerScanTimeoutsRef.current[nextTicker] = []
+    for (const intervalId of tickerScanIntervalsRef.current[nextTicker] ?? []) window.clearInterval(intervalId)
+    tickerScanIntervalsRef.current[nextTicker] = []
     const scanId = tickerScanSequenceRef.current + 1
     tickerScanSequenceRef.current = scanId
     tickerScanIdsRef.current[nextTicker] = scanId
@@ -475,14 +487,60 @@ export function AnalystExperienceDisplay({
       }, delayMs)
       tickerScanTimeoutsRef.current[nextTicker].push(timeoutId)
     }
-    const scheduleDataRefresh = (delayMs: number) => schedule(delayMs, () => {
-      if (activeTickerRef.current !== nextTicker) return
-      void refreshTickerData().catch((refreshError: unknown) => {
-        const message = getErrorMessage(refreshError, `Unable to refresh ${nextTicker} data.`)
-        console.warn(`[ticker-scan] ${nextTicker} database refresh failed:`, refreshError)
-        appendTerminalLog(nextTicker, `[SYS] Database refresh failed: ${message}`)
+    let scraperRequestsSettled = false
+    let scraperSucceeded = false
+    let pollInFlight: Promise<void> | null = null
+    let pollingInterval: number | null = null
+    const stopPolling = () => {
+      if (pollingInterval !== null) {
+        window.clearInterval(pollingInterval)
+        tickerScanIntervalsRef.current[nextTicker] = (tickerScanIntervalsRef.current[nextTicker] ?? [])
+          .filter((intervalId) => intervalId !== pollingInterval)
+        pollingInterval = null
+      }
+    }
+    const pollForTickerData = async (): Promise<void> => {
+      if (pollInFlight || tickerScanIdsRef.current[nextTicker] !== scanId) return pollInFlight ?? undefined
+      pollInFlight = (async () => {
+        const [scrapedResult, ratingsResult, insiderResult] = await Promise.all([
+          client.from('scraped_items').select('id', { count: 'exact', head: true }).eq('ticker', nextTicker),
+          client.from('finviz_analyst_ratings').select('id', { count: 'exact', head: true }).eq('ticker', nextTicker),
+          client.from('finviz_insider_trades').select('id', { count: 'exact', head: true }).eq('ticker', nextTicker),
+        ])
+        const queryError = [scrapedResult.error, ratingsResult.error, insiderResult.error].find(Boolean)
+        if (queryError) throw queryError
+        const hasTickerData = [scrapedResult.count, ratingsResult.count, insiderResult.count]
+          .some((count) => (count ?? 0) > 0)
+        if (!hasTickerData && !scraperRequestsSettled) return
+
+        stopPolling()
+        tickerScanFinishedIdsRef.current[nextTicker] = scanId
+        if (activeTickerRef.current === nextTicker) await refreshTickerData()
+        if (tickerScanIdsRef.current[nextTicker] !== scanId) return
+        setTickerExtraction((current) => ({
+          ...current,
+          [nextTicker]: hasTickerData
+            ? { status: 'complete', step: 2, message: `Live data for ${nextTicker} is loaded.` }
+            : scraperSucceeded
+              ? { status: 'complete', step: 2, message: `Scan finished; no new records were found for ${nextTicker}.` }
+              : { status: 'error', step: 2, message: `No data could be loaded for ${nextTicker}.` },
+        }))
+        if (hasTickerData) appendTerminalLog(nextTicker, `[SYS] Live Supabase records detected and loaded for ${nextTicker}.`)
+      })().finally(() => {
+        pollInFlight = null
       })
-    })
+      return pollInFlight
+    }
+    const startPolling = () => {
+      if (pollingInterval !== null) return
+      pollingInterval = window.setInterval(() => {
+        void pollForTickerData().catch((pollError: unknown) => {
+          console.warn(`[ticker-scan] ${nextTicker} polling failed:`, pollError)
+          appendTerminalLog(nextTicker, `[SYS] Data sync retry failed: ${getErrorMessage(pollError, 'database query failed')}`)
+        })
+      }, 3_000)
+      tickerScanIntervalsRef.current[nextTicker].push(pollingInterval)
+    }
     setTickerExtraction((current) => ({
       ...current,
       [nextTicker]: { status: 'running', step: 0 },
@@ -509,12 +567,7 @@ export function AnalystExperienceDisplay({
         appendTerminalLog(nextTicker, '[SYS] Aggregating market news and insider forms...')
         updateProgress(2)
       })
-      schedule(12_000, () => {
-        if (tickerScanFinishedIdsRef.current[nextTicker] === scanId) return
-        setTickerExtraction((current) => current[nextTicker]?.status === 'running'
-          ? { ...current, [nextTicker]: { status: 'complete', step: 2, message: `Background scan is continuing; checking for ${nextTicker} data.` } }
-          : current)
-      })
+      startPolling()
 
       const runScraper = (
         functionName: 'scrape-sec' | 'scrape-finviz',
@@ -539,35 +592,13 @@ export function AnalystExperienceDisplay({
         runScraper('scrape-sec', 'SEC'),
         runScraper('scrape-finviz', 'Finviz'),
       ])
-      scheduleDataRefresh(4_000)
-      scheduleDataRefresh(10_000)
-      scheduleDataRefresh(20_000)
-      scheduleDataRefresh(35_000)
 
       void scrapeResults.then(async (results) => {
         const succeeded = results.filter((result) => result.status === 'fulfilled').length
-        tickerScanFinishedIdsRef.current[nextTicker] = scanId
-        if (activeTickerRef.current === nextTicker) await refreshTickerData()
-        if (succeeded === 0) {
-          if (tickerScanIdsRef.current[nextTicker] !== scanId) return
-          setTickerExtraction((current) => ({
-            ...current,
-            [nextTicker]: { status: 'error', step: 2, message: `Both background scrapers failed for ${nextTicker}.` },
-          }))
-          return
-        }
-        if (tickerScanIdsRef.current[nextTicker] !== scanId) return
-        setTickerExtraction((current) => ({
-          ...current,
-          [nextTicker]: {
-            status: 'complete',
-            step: 2,
-            message: succeeded === results.length
-              ? `Market data for ${nextTicker} was refreshed.`
-              : `Some ${nextTicker} data was refreshed; one source failed.`,
-          },
-        }))
-        if (succeeded !== results.length) return
+        scraperSucceeded = succeeded > 0
+        scraperRequestsSettled = true
+        await pollForTickerData()
+        if (tickerScanIdsRef.current[nextTicker] !== scanId || succeeded !== results.length) return
 
         const { data: enqueueResponse, error: enqueueError } = await client.functions.invoke<{
           success: boolean
