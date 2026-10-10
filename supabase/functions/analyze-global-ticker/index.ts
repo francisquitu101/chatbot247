@@ -3,8 +3,6 @@ import { errorResponse, handleOptions, ok, readJson } from '../_shared/response.
 
 type SourceReference = {
   ref: string
-  record_id: string
-  source_type: string
   title: string
   published_at: string | null
   url: string | null
@@ -18,8 +16,6 @@ type AnalysisOutput = {
   financial_metrics: Array<{
     metric: string
     value: string
-    change_percent: string | null
-    source_refs: string[]
   }>
   risk_assessment: Array<{
     risk: string
@@ -47,12 +43,10 @@ const reportSchema = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['metric', 'value', 'change_percent', 'source_refs'],
+        required: ['metric', 'value'],
         properties: {
           metric: { type: 'string' },
           value: { type: 'string' },
-          change_percent: { type: ['string', 'null'] },
-          source_refs: { type: 'array', items: { type: 'string' } },
         },
       },
     },
@@ -75,20 +69,19 @@ const reportSchema = {
   },
 }
 
-const systemPrompt = `You are an institutional equity research analyst. Produce a source-grounded due diligence report using only the evidence in the user message.
+const systemPrompt = `You are MarketMole's institutional equity research analyst. Write in an authoritative, proprietary research voice: state conclusions directly (for example, "Our analysis indicates..." or "Key performance indicators show..."). Never describe how information was gathered or refer to the source bundle as supplied evidence.
 
-Mandatory sections are represented by the required JSON fields: executive_summary, sec_filings_analysis, financial_metrics, risk_assessment, catalysts, and conclusion. A bibliography is assembled by the server from the exact source records provided.
+Mandatory sections are represented by the required JSON fields: executive_summary, sec_filings_analysis, financial_metrics, risk_assessment, catalysts, and conclusion. A numbered bibliography is assembled by the server from the exact source records used.
 
 Evidence and accuracy rules:
 - Never invent financial values, dates, percentage changes, filing contents, analyst views, insider activity, or causal explanations.
-- Financial metrics may only repeat values explicitly present in the supplied Finviz snapshot. Preserve their units and label them accurately. Do not recalculate a percentage change unless both the starting and ending values and their periods are explicitly supplied; if no supported change exists, use null.
-- Leave financial_metrics empty: the server fills that table directly from the stored snapshot so each displayed value remains verifiable. Keep financial numerals and percentages out of prose fields.
-- Cite every factual finding with its source reference key exactly as supplied, in square brackets (for example [SEC-1] or [MKT-1]). Each financial metric and risk must also include its applicable source_refs. Do not create reference keys.
-- Distinguish facts from interpretation, state the data date where available, and disclose when evidence is missing or conflicting.
-- Discuss the actual SEC forms and document titles present in the evidence; do not assume a filing exists. If no filings were provided, say so explicitly.
-- Keep risk severity proportional to the evidence. Do not turn absence of data into proof of safety or risk.
-- If the evidence is sparse, explicitly state that the conclusion is limited. Never fill gaps with general market knowledge.
-- Write concise, professional institutional prose. Avoid generic quadrant summaries and unsupported investment recommendations.`
+- Never mention Finviz, SeekingAlpha, scraping, extraction, a supplied evidence bundle, missing documents, or complain that an annual report or other filing was not provided. Do not expose data-provider names in the report narrative.
+- When the records contain Form 4 filings or insider transactions without periodic financial statements, analyze the disclosed insider activity directly: identify the transaction type, reported shares/value where available, and whether activity is buying, selling, or mixed. Do not apologize for the absence of other filings.
+- The server fills financial_metrics directly from the stored market snapshot. Return financial_metrics as an empty array. The rendered table has exactly two columns (Metric | Value); do not add change, evidence, or citation columns and do not place citations in metric values.
+- Cite factual statements in narrative sections using only the plain numeric bibliography references provided, formatted exactly as [1], [2]. Never use source-type prefixes, invent references, or add references to financial_metrics.
+- Write facts and interpretation in a confident, professional house voice. State material limitations as analytical scope (for example, "The assessment focuses on disclosed insider activity") rather than as process complaints.
+- Keep risk severity proportional to the records and do not infer safety or risk from absent data. Never fill gaps with general market knowledge.
+- Write concise institutional prose and avoid generic quadrant summaries or unsupported investment recommendations.`
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
@@ -136,19 +129,17 @@ function getFiniteMetric(value: unknown): string | null {
 function buildFinancialMetrics(snapshot: Record<string, unknown> | null): AnalysisOutput['financial_metrics'] {
   if (!snapshot) return []
   const metrics: AnalysisOutput['financial_metrics'] = []
-  const add = (field: string, metric: string, unit: string, changePercent: string | null = null) => {
+  const add = (field: string, metric: string, unit: string) => {
     const value = getFiniteMetric(snapshot[field])
-    if (value !== null) metrics.push({ metric, value: `${value}${unit}`, change_percent: changePercent, source_refs: ['MKT-1'] })
+    if (value !== null) metrics.push({ metric, value: `${value}${unit}` })
   }
   add('price', 'Latest price', ' USD')
   const dailyMove = getFiniteMetric(snapshot.change_value)
   const dailyChange = getFiniteMetric(snapshot.change_pct)
   if (dailyMove !== null || dailyChange !== null) {
     metrics.push({
-      metric: 'Daily price movement',
-      value: dailyMove === null ? 'Not provided' : `${dailyMove} USD`,
-      change_percent: dailyChange === null ? null : `${dailyChange}%`,
-      source_refs: ['MKT-1'],
+      metric: dailyChange !== null ? 'Daily price change' : 'Daily price movement',
+      value: dailyChange !== null ? `${dailyChange}%` : `${dailyMove} USD`,
     })
   }
   add('market_cap', 'Market capitalization', ' USD')
@@ -165,29 +156,27 @@ function buildFinancialMetrics(snapshot: Record<string, unknown> | null): Analys
 }
 
 function validateCitationKeys(value: string, validRefs: Set<string>): string {
-  return value.replace(/\[([A-Z]+-\d+)\]/g, (match, ref: string) => validRefs.has(ref) ? match : '[citation unavailable]')
+  return value.replace(/\[(\d+)\]/g, (match, ref: string) => validRefs.has(ref) ? match : '')
 }
 
 function validateAnalysis(value: unknown): value is AnalysisOutput {
   const result = record(value)
   const sentiments = ['Bullish', 'Bearish', 'Neutral']
-  if (!sentiments.includes(String(result.sentiment))) return null
-  if (typeof result.executive_summary !== 'string' || typeof result.sec_filings_analysis !== 'string' || typeof result.conclusion !== 'string') return null
-  if (!Array.isArray(result.key_findings) || !Array.isArray(result.financial_metrics) || !Array.isArray(result.risk_assessment) || !Array.isArray(result.catalysts)) return null
+  if (!sentiments.includes(String(result.sentiment))) return false
+  if (typeof result.executive_summary !== 'string' || typeof result.sec_filings_analysis !== 'string' || typeof result.conclusion !== 'string') return false
+  if (!Array.isArray(result.key_findings) || !Array.isArray(result.financial_metrics) || !Array.isArray(result.risk_assessment) || !Array.isArray(result.catalysts)) return false
   const stringsOnly = (values: unknown[]) => values.every((entry) => typeof entry === 'string')
-  if (!stringsOnly(result.key_findings) || !stringsOnly(result.catalysts)) return null
+  if (!stringsOnly(result.key_findings) || !stringsOnly(result.catalysts)) return false
   if (!result.financial_metrics.every((entry) => {
     const item = record(entry)
-    return typeof item.metric === 'string' && typeof item.value === 'string' &&
-      (typeof item.change_percent === 'string' || item.change_percent === null) &&
-      Array.isArray(item.source_refs) && stringsOnly(item.source_refs)
-  })) return null
+    return typeof item.metric === 'string' && typeof item.value === 'string'
+  })) return false
   if (!result.risk_assessment.every((entry) => {
     const item = record(entry)
     return typeof item.risk === 'string' && typeof item.details === 'string' &&
       ['High', 'Moderate', 'Low'].includes(String(item.severity)) &&
       Array.isArray(item.source_refs) && stringsOnly(item.source_refs)
-  })) return null
+  })) return false
   return true
 }
 
@@ -215,11 +204,11 @@ Deno.serve(async (request) => {
 
     const client = createBackendClient('service_role')
     const [filingsResult, newsResult, ratingsResult, insidersResult, snapshotResult] = await Promise.all([
-      client.from('scraped_items').select('id,title,content,url,published_at,scraped_at,metadata').eq('ticker', ticker).eq('metadata->>source', 'SEC').order('scraped_at', { ascending: false }).limit(30),
-      client.from('scraped_items').select('id,title,content,url,published_at,scraped_at,metadata').eq('ticker', ticker).eq('item_type', 'news').in('metadata->>extractor', newsExtractors).order('scraped_at', { ascending: false }).limit(30),
-      client.from('finviz_analyst_ratings').select('id,rating_date,action,analyst,rating_change,price_target_change,scraped_at').eq('ticker', ticker).order('rating_date', { ascending: false }).limit(20),
-      client.from('finviz_insider_trades').select('id,insider_name,relationship,transaction_date,transaction,cost,shares,value,shares_total,sec_form4_url,scraped_at').eq('ticker', ticker).order('transaction_date', { ascending: false }).limit(20),
-      client.from('finviz_market_data').select('id,price,change_value,change_pct,volume,avg_volume,market_cap,pe,forward_pe,eps_growth,sales_growth,beta,high_52w,low_52w,insider_ownership,institutional_ownership,source,updated_at').eq('ticker', ticker).order('updated_at', { ascending: false }).limit(1).maybeSingle(),
+      client.from('scraped_items').select('title,content,url,published_at,scraped_at,metadata').eq('ticker', ticker).eq('metadata->>source', 'SEC').order('scraped_at', { ascending: false }).limit(30),
+      client.from('scraped_items').select('title,content,url,published_at,scraped_at,metadata').eq('ticker', ticker).eq('item_type', 'news').in('metadata->>extractor', newsExtractors).order('scraped_at', { ascending: false }).limit(30),
+      client.from('finviz_analyst_ratings').select('rating_date,action,analyst,rating_change,price_target_change,scraped_at').eq('ticker', ticker).order('rating_date', { ascending: false }).limit(20),
+      client.from('finviz_insider_trades').select('insider_name,relationship,transaction_date,transaction,cost,shares,value,shares_total,sec_form4_url,scraped_at').eq('ticker', ticker).order('transaction_date', { ascending: false }).limit(20),
+      client.from('finviz_market_data').select('price,change_value,change_pct,volume,avg_volume,market_cap,pe,forward_pe,eps_growth,sales_growth,beta,high_52w,low_52w,insider_ownership,institutional_ownership,updated_at').eq('ticker', ticker).order('updated_at', { ascending: false }).limit(1).maybeSingle(),
     ])
 
     const queryError = filingsResult.error ?? newsResult.error ?? ratingsResult.error ?? insidersResult.error ?? snapshotResult.error
@@ -246,9 +235,13 @@ Deno.serve(async (request) => {
     if (since && !hasNewData) return ok({ ticker, unchanged: true, has_new_data: false }, request)
 
     const bibliography: SourceReference[] = []
-    const filingEvidence = filings.map((item, index) => {
-      const ref = `SEC-${index + 1}`
-      bibliography.push({ ref, record_id: item.id, source_type: 'SEC filing', title: text(item.title, 300) || 'SEC filing', published_at: item.published_at, url: getString(item.url) })
+    const addBibliographyEntry = (title: string, published_at: string | null, url: string | null) => {
+      const ref = String(bibliography.length + 1)
+      bibliography.push({ ref, title, published_at, url })
+      return ref
+    }
+    const filingEvidence = filings.map((item) => {
+      const ref = addBibliographyEntry(text(item.title, 300) || 'SEC filing', item.published_at, getString(item.url))
       return {
         ref,
         title: text(item.title, 300),
@@ -258,25 +251,21 @@ Deno.serve(async (request) => {
         metadata: record(item.metadata),
       }
     })
-    const newsEvidence = news.map((item, index) => {
-      const ref = `NEWS-${index + 1}`
-      bibliography.push({ ref, record_id: item.id, source_type: 'Market news', title: text(item.title, 300) || 'Market news article', published_at: item.published_at, url: getString(item.url) })
+    const newsEvidence = news.map((item) => {
+      const ref = addBibliographyEntry(text(item.title, 300) || 'Market news article', item.published_at, getString(item.url))
       return { ref, title: text(item.title, 300), published_at: item.published_at, url: item.url, excerpt: text(item.content, 1000) }
     })
-    const ratingEvidence = ratings.map((item, index) => {
-      const ref = `RATING-${index + 1}`
-      bibliography.push({ ref, record_id: item.id, source_type: 'Analyst rating', title: `${text(item.analyst, 160) || 'Analyst'} — ${text(item.action, 160) || 'Rating update'}`, published_at: item.rating_date, url: null })
+    const ratingEvidence = ratings.map((item) => {
+      const ref = addBibliographyEntry(`${text(item.analyst, 160) || 'Analyst'} — ${text(item.action, 160) || 'Rating update'}`, item.rating_date, null)
       return { ref, ...item }
     })
-    const insiderEvidence = insiderTrades.map((item, index) => {
-      const ref = `INSIDER-${index + 1}`
-      bibliography.push({ ref, record_id: item.id, source_type: 'Insider transaction', title: `${text(item.insider_name, 160) || 'Insider'} — ${text(item.transaction, 160) || 'Transaction'}`, published_at: item.transaction_date, url: getString(item.sec_form4_url) })
+    const insiderEvidence = insiderTrades.map((item) => {
+      const ref = addBibliographyEntry(`${text(item.insider_name, 160) || 'Insider'} — ${text(item.transaction, 160) || 'Transaction'}`, item.transaction_date, getString(item.sec_form4_url))
       return { ref, ...item }
     })
     let marketEvidence: Record<string, unknown> | null = null
     if (snapshot) {
-      const ref = 'MKT-1'
-      bibliography.push({ ref, record_id: snapshot.id, source_type: 'Finviz market snapshot', title: `${ticker} market data snapshot`, published_at: snapshot.updated_at, url: null })
+      const ref = addBibliographyEntry(`${ticker} market data snapshot`, snapshot.updated_at, null)
       marketEvidence = { ref, ...snapshot }
     }
 
@@ -335,15 +324,19 @@ Deno.serve(async (request) => {
     analysis.sec_filings_analysis = validateCitationKeys(analysis.sec_filings_analysis, validRefs)
     analysis.catalysts = analysis.catalysts.map((catalyst) => validateCitationKeys(catalyst, validRefs))
     analysis.conclusion = validateCitationKeys(analysis.conclusion, validRefs)
-    analysis.financial_metrics = buildFinancialMetrics(marketEvidence)
-    analysis.risk_assessment = analysis.risk_assessment
-      .map((risk) => ({
+    analysis.risk_assessment = analysis.risk_assessment.map((risk) => {
+      const sourceRefs = cleanRefs(risk.source_refs, validRefs)
+      const details = validateCitationKeys(risk.details, validRefs)
+      const missingCitations = sourceRefs.filter((ref) => !details.includes(`[${ref}]`))
+      return {
         ...risk,
         risk: validateCitationKeys(risk.risk, validRefs),
-        details: validateCitationKeys(risk.details, validRefs),
-        source_refs: cleanRefs(risk.source_refs, validRefs),
-      }))
-      .filter((risk) => risk.source_refs.length > 0)
+        details: missingCitations.length > 0 ? `${details} ${missingCitations.map((ref) => `[${ref}]`).join(' ')}` : details,
+        source_refs: sourceRefs,
+      }
+    })
+    analysis.risk_assessment = analysis.risk_assessment.filter((risk) => risk.source_refs.length > 0)
+    analysis.financial_metrics = buildFinancialMetrics(marketEvidence)
     const result = {
       ticker,
       analysis,
@@ -355,6 +348,19 @@ Deno.serve(async (request) => {
         insider_trades: insiderTrades.length,
         analyst_ratings: ratings.length,
       },
+    }
+    const { error: persistError } = await client
+      .from('global_ticker_analysis_reports')
+      .upsert({
+        ticker,
+        analysis: result.analysis,
+        bibliography: result.bibliography,
+        generated_at: result.generated_at,
+        data_counts: result.data_counts,
+      }, { onConflict: 'ticker' })
+    if (persistError) {
+      console.error(JSON.stringify({ event: 'global_analysis_persistence_failed', ticker, error: persistError.message }))
+      return errorResponse('REPORT_PERSISTENCE_FAILED', 'The report was generated but could not be saved. Please try again.', 500, request)
     }
     console.info(JSON.stringify({ event: 'global_analysis_generated', ticker, model, data_counts: result.data_counts, bibliography_count: bibliography.length }))
     return ok(result, request)

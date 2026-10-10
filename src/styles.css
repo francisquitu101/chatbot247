@@ -913,57 +913,6 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
 .luna-mini-status.error,
 .luna-window-status.error { color: #8a2d2d; background: rgba(138, 45, 45, 0.05); }
 
-.luna-window-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  min-height: 62px;
-  padding: 10px 18px;
-  border-top: 1px solid rgba(19, 33, 39, 0.06);
-  background: rgba(255, 255, 255, 0.96);
-  flex-shrink: 0;
-}
-
-.luna-enqueue-feedback {
-  min-width: 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.luna-enqueue-error { color: #9b3030; }
-.luna-enqueue-success { color: #9a5a21; }
-
-.luna-enqueue-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 38px;
-  padding: 0 15px;
-  border: 1px solid rgba(253, 186, 116, 0.5);
-  border-radius: 11px;
-  background: linear-gradient(135deg, #303740, #1e232a);
-  box-shadow: 0 5px 14px rgba(30, 35, 42, 0.2);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-
-.luna-enqueue-button:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 8px 20px rgba(30, 35, 42, 0.28);
-}
-
-.luna-enqueue-button:disabled { opacity: 0.72; }
-
-.luna-enqueue-button .spinning {
-  animation: luna-spin 1s linear infinite;
-}
-
 @keyframes luna-spin {
   to { transform: rotate(360deg); }
 }
@@ -1783,7 +1732,7 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
 .luna-report-view {
   display: flex;
   flex: 1 1 auto;
-  min-height: 0;
+  min-height: 100%;
   flex-direction: column;
   overflow-y: auto;
   padding: 18px;
@@ -1791,8 +1740,11 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
 }
 
 .global-analysis-panel {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
   width: min(100%, 760px);
-  margin: 0 auto 24px;
+  margin: 0 auto;
   padding: 18px;
   border: 1px solid rgba(19, 33, 39, 0.09);
   border-radius: 16px;
@@ -1856,9 +1808,19 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   font-weight: 700;
 }
 
+.institutional-report-actions {
+  display: flex;
+  justify-content: flex-end;
+  width: min(100%, 720px);
+  margin: 0 auto;
+}
+
 .institutional-report {
+  flex: 1 0 auto;
   width: min(100%, 720px);
   margin: 12px auto 0;
+  min-height: 100%;
+  box-sizing: border-box;
   padding: 34px 40px;
   border: 1px solid #dce5e0;
   background: #fff;
@@ -1959,6 +1921,29 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   vertical-align: top;
 }
 
+.citation-link {
+  margin-left: 1px;
+  font-family: Arial, sans-serif;
+  font-size: 0.72em;
+  font-weight: 700;
+  line-height: 0;
+  vertical-align: super;
+}
+
+.citation-link a {
+  color: #38677a;
+  text-decoration: none;
+}
+
+.citation-link a:hover,
+.citation-link a:focus-visible {
+  color: #17495d;
+  text-decoration: underline;
+}
+
+.report-metrics-table th:first-child { width: 42%; }
+.report-metrics-table th:last-child { width: 58%; }
+
 .report-metrics-table thead { background: #f2f6f4; }
 .report-metrics-table th { color: #34463f; }
 .report-metrics-table td { color: #3e4a45; overflow-wrap: anywhere; }
@@ -2044,6 +2029,12 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
     background: #fff !important;
   }
 
+  .marketmole-navbar,
+  .luna-desktop-icons,
+  .luna-titlebar,
+  .luna-window-header,
+  .luna-terminal-window,
+  .institutional-report-actions,
   .luna-chat-shell > :not(.luna-desktop-windows),
   .luna-desktop-windows > :not(.luna-analysis-window),
   .luna-analysis-window > :not(.luna-report-view),
@@ -2080,9 +2071,13 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
     -webkit-print-color-adjust: exact;
   }
 
+  .luna-terminal-window { display: none !important; }
+
   .global-analysis-pdf-brand { display: none !important; }
+  .global-analysis-heading,
   .global-analysis-heading > button { display: none !important; }
   .institutional-report {
+    display: block !important;
     width: 100% !important;
     max-width: none !important;
     margin: 0 !important;
@@ -2661,14 +2656,6 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
 
   .luna-sec-file { padding: 12px 7px; }
 
-  .luna-window-footer {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 8px;
-    padding: 10px 14px max(10px, env(safe-area-inset-bottom));
-  }
-
-  .luna-enqueue-button { width: 100%; }
   .luna-source-toast {
     right: 16px;
     bottom: 112px;

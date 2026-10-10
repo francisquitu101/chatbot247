@@ -1,7 +1,7 @@
+import { Download } from 'lucide-react'
+
 export type GlobalAnalysisBibliographyItem = {
   ref: string
-  record_id: string
-  source_type: string
   title: string
   published_at: string | null
   url: string | null
@@ -17,8 +17,6 @@ export type GlobalTickerAnalysis = {
     financial_metrics: Array<{
       metric: string
       value: string
-      change_percent: string | null
-      source_refs: string[]
     }>
     risk_assessment: Array<{
       risk: string
@@ -60,9 +58,21 @@ function getExternalUrl(value: string | null) {
   }
 }
 
-function SourceReferences({ refs }: { refs: string[] }) {
-  if (refs.length === 0) return null
-  return <p className="report-source-refs">Sources: {refs.join(', ')}</p>
+function CitationText({ text, bibliography }: { text: string; bibliography: GlobalAnalysisBibliographyItem[] }) {
+  const knownReferences = new Set(bibliography.map((source) => source.ref))
+  const parts = (text ?? '').split(/(\[\d+\])/g)
+
+  return parts.map((part, index) => {
+    const citation = part.match(/^\[(\d+)\]$/)
+    if (!citation || !knownReferences.has(citation[1])) return part
+    return (
+      <sup className="citation-link" key={`${index}-${citation[1]}`}>
+        <a href={`#bib-${citation[1]}`} aria-label={`Bibliography reference ${citation[1]}`}>
+          {citation[1]}
+        </a>
+      </sup>
+    )
+  })
 }
 
 export function GlobalAnalysisReport({ report }: GlobalAnalysisReportProps) {
@@ -70,6 +80,12 @@ export function GlobalAnalysisReport({ report }: GlobalAnalysisReportProps) {
 
   return (
     <article className="institutional-report" aria-label={`${report.ticker} due diligence report`}>
+      <div className="institutional-report-actions">
+        <button type="button" className="global-analysis-export-button" onClick={() => window.print()}>
+          <Download size={14} />
+          Export PDF
+        </button>
+      </div>
       <header className="institutional-report-cover">
         <p className="institutional-report-brand">MarketMole · Institutional Research</p>
         <span className={`report-sentiment sentiment-${analysis.sentiment.toLowerCase()}`}>
@@ -84,15 +100,17 @@ export function GlobalAnalysisReport({ report }: GlobalAnalysisReportProps) {
 
       <section className="institutional-report-section">
         <h3>1. Executive Summary</h3>
-        <p>{analysis.executive_summary}</p>
+        <p><CitationText text={analysis.executive_summary} bibliography={bibliography} /></p>
         <ul>
-          {analysis.key_findings.map((finding, index) => <li key={`${index}-${finding}`}>{finding}</li>)}
+          {analysis.key_findings.map((finding, index) => (
+            <li key={`${index}-${finding}`}><CitationText text={finding} bibliography={bibliography} /></li>
+          ))}
         </ul>
       </section>
 
       <section className="institutional-report-section">
         <h3>2. SEC Filings Analysis</h3>
-        <p>{analysis.sec_filings_analysis}</p>
+        <p><CitationText text={analysis.sec_filings_analysis} bibliography={bibliography} /></p>
       </section>
 
       <section className="institutional-report-section">
@@ -101,15 +119,13 @@ export function GlobalAnalysisReport({ report }: GlobalAnalysisReportProps) {
           <div className="report-table-wrap">
             <table className="report-metrics-table">
               <thead>
-                <tr><th>Metric</th><th>Reported value</th><th>Change</th><th>Evidence</th></tr>
+                <tr><th>Metric</th><th>Value</th></tr>
               </thead>
               <tbody>
                 {analysis.financial_metrics.map((metric, index) => (
                   <tr key={`${metric.metric}-${index}`}>
                     <th scope="row">{metric.metric}</th>
                     <td>{metric.value}</td>
-                    <td>{metric.change_percent ?? 'Not provided'}</td>
-                    <td>{metric.source_refs.length > 0 ? metric.source_refs.join(', ') : '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -124,10 +140,9 @@ export function GlobalAnalysisReport({ report }: GlobalAnalysisReportProps) {
           <ol className="report-risk-list">
             {analysis.risk_assessment.map((risk, index) => (
               <li key={`${risk.risk}-${index}`}>
-                <strong>{risk.risk}</strong>
+                <strong><CitationText text={risk.risk} bibliography={bibliography} /></strong>
                 <span className={`report-risk-severity severity-${risk.severity.toLowerCase()}`}>{risk.severity}</span>
-                <p>{risk.details}</p>
-                <SourceReferences refs={risk.source_refs} />
+                <p><CitationText text={risk.details} bibliography={bibliography} /></p>
               </li>
             ))}
           </ol>
@@ -137,13 +152,13 @@ export function GlobalAnalysisReport({ report }: GlobalAnalysisReportProps) {
       <section className="institutional-report-section">
         <h3>5. Catalysts and Developments</h3>
         {analysis.catalysts.length > 0
-          ? <ul>{analysis.catalysts.map((catalyst, index) => <li key={`${index}-${catalyst}`}>{catalyst}</li>)}</ul>
+          ? <ul>{analysis.catalysts.map((catalyst, index) => <li key={`${index}-${catalyst}`}><CitationText text={catalyst} bibliography={bibliography} /></li>)}</ul>
           : <p>No sourced catalysts were identified in the reviewed materials.</p>}
       </section>
 
       <section className="institutional-report-section">
         <h3>6. Conclusion</h3>
-        <p>{analysis.conclusion}</p>
+        <p><CitationText text={analysis.conclusion} bibliography={bibliography} /></p>
       </section>
 
       <section className="institutional-report-section report-bibliography">
@@ -151,10 +166,9 @@ export function GlobalAnalysisReport({ report }: GlobalAnalysisReportProps) {
         {bibliography.length > 0 ? (
           <ol>
             {bibliography.map((source) => (
-              <li key={source.ref}>
+              <li id={`bib-${source.ref}`} key={source.ref}>
                 <strong>[{source.ref}] {source.title || 'Untitled source'}</strong>
-                <span>{source.source_type} · {formatReportTimestamp(source.published_at)}</span>
-                <span>Database record: {source.record_id}</span>
+                <span>{formatReportTimestamp(source.published_at)}</span>
                 {getExternalUrl(source.url) && (
                   <a href={getExternalUrl(source.url) ?? undefined} target="_blank" rel="noreferrer">
                     {getExternalUrl(source.url)}

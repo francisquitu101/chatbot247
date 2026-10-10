@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { ArrowRight, Brain, ChartColumnIncreasing, Chrome, Crown, Download, ExternalLink, FileText, FolderOpen, LogOut, Newspaper, Plus, RefreshCw, Star, TrendingUp } from 'lucide-react'
+import { ArrowRight, Brain, ChartColumnIncreasing, Chrome, Crown, ExternalLink, FileText, FolderOpen, LogOut, Newspaper, Plus, RefreshCw, Star, TrendingUp } from 'lucide-react'
 import { Navbar } from '../components/Navbar'
 import { PriceChart } from '../components/PriceChart'
 import { GlobalAnalysisReport, type GlobalTickerAnalysis } from '../components/GlobalAnalysisReport'
@@ -154,6 +154,45 @@ type GlobalAnalysisFreshness = {
   unchanged?: boolean
 }
 
+function isGlobalTickerAnalysis(value: unknown): value is GlobalTickerAnalysis {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const report = value as Record<string, unknown>
+  const analysis = report.analysis
+  const bibliography = report.bibliography
+  const dataCounts = report.data_counts
+  if (typeof report.ticker !== 'string' || typeof report.generated_at !== 'string') return false
+  if (!analysis || typeof analysis !== 'object' || Array.isArray(analysis)) return false
+  if (!Array.isArray(bibliography) || !dataCounts || typeof dataCounts !== 'object' || Array.isArray(dataCounts)) return false
+  const analysisRecord = analysis as Record<string, unknown>
+  const counts = dataCounts as Record<string, unknown>
+  if (!['Bullish', 'Bearish', 'Neutral'].includes(String(analysisRecord.sentiment))) return false
+  if (typeof analysisRecord.executive_summary !== 'string' || typeof analysisRecord.sec_filings_analysis !== 'string' || typeof analysisRecord.conclusion !== 'string') return false
+  if (!Array.isArray(analysisRecord.key_findings) || !analysisRecord.key_findings.every((item) => typeof item === 'string')) return false
+  if (!Array.isArray(analysisRecord.catalysts) || !analysisRecord.catalysts.every((item) => typeof item === 'string')) return false
+  if (!Array.isArray(analysisRecord.financial_metrics) || !analysisRecord.financial_metrics.every((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return false
+    const metric = item as Record<string, unknown>
+    return typeof metric.metric === 'string' && typeof metric.value === 'string'
+  })) return false
+  if (!Array.isArray(analysisRecord.risk_assessment) || !analysisRecord.risk_assessment.every((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return false
+    const risk = item as Record<string, unknown>
+    return typeof risk.risk === 'string' && typeof risk.details === 'string' &&
+      ['High', 'Moderate', 'Low'].includes(String(risk.severity)) &&
+      Array.isArray(risk.source_refs) && risk.source_refs.every((ref) => typeof ref === 'string' && /^\d+$/.test(ref))
+  })) return false
+  if (!bibliography.every((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return false
+    const source = item as Record<string, unknown>
+    return typeof source.ref === 'string' && /^\d+$/.test(source.ref) && typeof source.title === 'string' &&
+      (typeof source.published_at === 'string' || source.published_at === null) &&
+      (typeof source.url === 'string' || source.url === null)
+  })) return false
+  return ['news', 'sec_filings', 'insider_trades', 'analyst_ratings'].every(
+    (key) => typeof counts[key] === 'number' && Number.isFinite(counts[key]),
+  )
+}
+
 async function getFunctionErrorMessage(error: unknown): Promise<string> {
   if (error && typeof error === 'object' && 'context' in error) {
     const context = error.context
@@ -233,16 +272,15 @@ export function AnalystExperienceDisplay({
   const [profileLoadError, setProfileLoadError] = useState<string | null>(null)
   const [checkoutBusy, setCheckoutBusy] = useState(false)
   const [checkoutError, setCheckoutError] = useState<string | null>(null)
-  const [enqueueBusy, setEnqueueBusy] = useState(false)
-  const [enqueueMessage, setEnqueueMessage] = useState<string | null>(null)
-  const [enqueueError, setEnqueueError] = useState<string | null>(null)
   const [globalAnalysis, setGlobalAnalysis] = useState<GlobalTickerAnalysis | null>(null)
   const [globalAnalysisBusy, setGlobalAnalysisBusy] = useState(false)
+  const [globalAnalysisRestoreBusy, setGlobalAnalysisRestoreBusy] = useState(false)
   const [globalAnalysisError, setGlobalAnalysisError] = useState<string | null>(null)
   const [globalAnalysisHasUpdates, setGlobalAnalysisHasUpdates] = useState<boolean | null>(null)
   const [globalAnalysisChecking, setGlobalAnalysisChecking] = useState(false)
   const globalAnalysisTicker = globalAnalysis?.ticker
   const globalAnalysisGeneratedAt = globalAnalysis?.generated_at
+  const globalAnalysisRestoreSequenceRef = useRef(0)
   const [activeApp, setActiveApp] = useState<AnalystApp>('sec')
   const [briefingArticleId, setBriefingArticleId] = useState<string | null>(null)
   const [newsBriefings, setNewsBriefings] = useState<Record<string, NewsBriefing>>({})
@@ -754,30 +792,10 @@ export function AnalystExperienceDisplay({
     }
   }
 
-  async function handleEnqueueAnalysis() {
-    if (!supabase || !session || enqueueBusy) return
-    setEnqueueBusy(true)
-    setEnqueueMessage(null)
-    setEnqueueError(null)
-    try {
-      const { data: response, error: invokeError } = await supabase.functions.invoke<{
-        outcome: 'QUEUED' | 'ALREADY_QUEUED'
-        filing?: string
-      }>('enqueue-sec-analysis', { body: { ticker: activeTicker } })
-      if (invokeError) throw invokeError
-      if (!response) throw new Error('The enqueue endpoint returned no response.')
-      setEnqueueMessage(response.outcome === 'ALREADY_QUEUED'
-        ? 'An analysis for the latest SEC filing is already queued.'
-        : 'Latest SEC filing queued for durable analysis.')
-    } catch (enqueueFailure) {
-      setEnqueueError(enqueueFailure instanceof Error ? enqueueFailure.message : 'Unable to queue SEC analysis.')
-    } finally {
-      setEnqueueBusy(false)
-    }
-  }
-
   async function handleGlobalAnalysis() {
     if (!supabase || globalAnalysisBusy || !session) return
+    globalAnalysisRestoreSequenceRef.current += 1
+    setGlobalAnalysisRestoreBusy(false)
     setGlobalAnalysisBusy(true)
     setGlobalAnalysisError(null)
     try {
@@ -807,6 +825,54 @@ export function AnalystExperienceDisplay({
       setGlobalAnalysisBusy(false)
     }
   }
+
+  useEffect(() => {
+    const client = supabase
+    const tickerToRestore = activeTicker
+    const requestId = ++globalAnalysisRestoreSequenceRef.current
+    let isMounted = true
+    setGlobalAnalysis(null)
+    setGlobalAnalysisError(null)
+
+    if (!client || !sessionUserId) {
+      setGlobalAnalysisRestoreBusy(false)
+      return () => { isMounted = false }
+    }
+
+    setGlobalAnalysisRestoreBusy(true)
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const reportClient = client
+
+    async function restoreRecentReport() {
+      try {
+        const { data: savedReport, error: restoreError } = await reportClient
+          .from('global_ticker_analysis_reports')
+          .select('ticker, analysis, bibliography, generated_at, data_counts')
+          .eq('ticker', tickerToRestore)
+          .gte('generated_at', cutoff)
+          .maybeSingle()
+        if (restoreError) throw restoreError
+        if (!isMounted || requestId !== globalAnalysisRestoreSequenceRef.current || activeTickerRef.current !== tickerToRestore) return
+        if (savedReport) {
+          if (!isGlobalTickerAnalysis(savedReport)) {
+            throw new Error('The saved analysis report has an invalid data format.')
+          }
+          setGlobalAnalysis(savedReport)
+          setGlobalAnalysisHasUpdates(null)
+        }
+      } catch (restoreError) {
+        if (isMounted && requestId === globalAnalysisRestoreSequenceRef.current) {
+          console.error(`[global-analysis] Failed to restore saved report for ${tickerToRestore}:`, restoreError)
+          setGlobalAnalysisError(getErrorMessage(restoreError, 'Unable to restore the saved analysis report.'))
+        }
+      } finally {
+        if (isMounted && requestId === globalAnalysisRestoreSequenceRef.current) setGlobalAnalysisRestoreBusy(false)
+      }
+    }
+
+    void restoreRecentReport()
+    return () => { isMounted = false }
+  }, [activeTicker, sessionUserId])
 
   useEffect(() => {
     if (!supabase || !session || globalAnalysisTicker !== activeTicker || !globalAnalysisGeneratedAt) {
@@ -1527,14 +1593,16 @@ export function AnalystExperienceDisplay({
                   type="button"
                   className="global-analysis-button"
                   onClick={() => void handleGlobalAnalysis()}
-                  disabled={!session || globalAnalysisBusy || (globalAnalysis?.ticker === activeTicker && (globalAnalysisHasUpdates === false || globalAnalysisChecking))}
+                  disabled={!session || globalAnalysisBusy || globalAnalysisRestoreBusy || (globalAnalysis?.ticker === activeTicker && (globalAnalysisHasUpdates === false || globalAnalysisChecking))}
                   title={globalAnalysis?.ticker === activeTicker && globalAnalysisHasUpdates === false
                     ? 'No new market data since this analysis was generated.'
                     : undefined}
                 >
-                  <Brain size={15} className={globalAnalysisBusy ? 'spinning' : undefined} />
+                  <Brain size={15} className={globalAnalysisBusy || globalAnalysisRestoreBusy ? 'spinning' : undefined} />
                   {globalAnalysisBusy
                     ? 'Analyzing…'
+                    : globalAnalysisRestoreBusy
+                      ? 'Restoring saved report…'
                     : !session
                       ? 'Sign in to run analysis'
                     : globalAnalysis?.ticker === activeTicker
@@ -1545,20 +1613,12 @@ export function AnalystExperienceDisplay({
                           : 'Refresh analysis'
                       : 'Run analysis'}
                 </button>
-                {globalAnalysis?.ticker === activeTicker && (
-                  <button
-                    type="button"
-                    className="global-analysis-export-button"
-                    onClick={() => window.print()}
-                  >
-                    <Download size={14} />
-                    Export PDF
-                  </button>
-                )}
               </div>
               {globalAnalysisError && <p className="global-analysis-error" role="alert">{globalAnalysisError}</p>}
-              {globalAnalysisBusy && <p className="global-analysis-loading" role="status">&gt; Aggregating news, SEC filings, insider trades &amp; ratings...</p>}
-              {!globalAnalysisBusy && globalAnalysis?.ticker !== activeTicker && (
+              {(globalAnalysisBusy || globalAnalysisRestoreBusy) && <p className="global-analysis-loading" role="status">
+                {globalAnalysisRestoreBusy ? '> Restoring saved institutional report...' : '> Aggregating news, SEC filings, insider trades & ratings...'}
+              </p>}
+              {!globalAnalysisBusy && !globalAnalysisRestoreBusy && globalAnalysis?.ticker !== activeTicker && (
                 showTickerDataLoader
                   ? <DataLoadingState ticker={activeTicker} />
                   : <DataEmptyState ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.analysis} errorMessage={error} />
@@ -1572,23 +1632,6 @@ export function AnalystExperienceDisplay({
           </main>
         )}
 
-        <footer className="luna-window-footer">
-          <div className="luna-enqueue-feedback" aria-live="polite">
-            {enqueueError && <span className="luna-enqueue-error">{enqueueError}</span>}
-            {enqueueMessage && <span className="luna-enqueue-success">{enqueueMessage}</span>}
-          </div>
-          {activeApp === 'analysis' && session && secFiles.length > 0 && (
-            <button
-              type="button"
-              className="luna-enqueue-button"
-              onClick={() => void handleEnqueueAnalysis()}
-              disabled={enqueueBusy || statusLabel === 'PROCESSING'}
-            >
-              <RefreshCw size={15} className={enqueueBusy ? 'spinning' : undefined} />
-              {enqueueBusy ? 'Encolando…' : statusLabel === 'PROCESSING' ? 'Análisis en curso' : 'Actualizar análisis SEC'}
-            </button>
-          )}
-        </footer>
       </div>
 
       {terminalWindow}
