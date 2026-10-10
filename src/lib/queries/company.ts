@@ -43,6 +43,29 @@ export type CompanyActivityFeed = {
   recentInsiders: FinvizInsiderTrade[]
 }
 
+export type SecCompanyFiling = {
+  id: string
+  ticker: string
+  title: string | null
+  url: string
+  published_at: string | null
+  metadata: Record<string, unknown>
+}
+
+export async function getSecCompanyFilings(client: SupabaseClient, ticker: string): Promise<SecCompanyFiling[]> {
+  const normalizedTicker = ticker.trim().toUpperCase()
+  const { data, error } = await client
+    .from('scraped_items')
+    .select('id, ticker, title, url, published_at, metadata')
+    .eq('ticker', normalizedTicker)
+    .eq('metadata->>source', 'SEC')
+    .order('published_at', { ascending: false, nullsFirst: false })
+    .limit(1000)
+
+  if (error) throw error
+  return (data ?? []) as SecCompanyFiling[]
+}
+
 export async function getCompanyData(client: SupabaseClient, ticker: string): Promise<CompanyData> {
   const normalizedTicker = ticker.toUpperCase()
   const [stockResult, itemsResult, ratingsResult, insiderResult] = await Promise.all([
@@ -65,26 +88,33 @@ export async function getCompanyData(client: SupabaseClient, ticker: string): Pr
 }
 
 export async function getFinvizCompanyActivity(client: SupabaseClient, ticker: string): Promise<FinvizCompanyActivity> {
-  const normalizedTicker = ticker.toUpperCase()
-  const [ratingsResult, insiderResult] = await Promise.all([
-    client.from('finviz_analyst_ratings')
-      .select('id, ticker, source_id, rating_date, action, analyst, rating_change, price_target_change, created_at, scraped_at, content_hash')
-      .eq('ticker', normalizedTicker)
-      .order('rating_date', { ascending: false }),
-    client.from('finviz_insider_trades')
-      .select('id, ticker, source_id, insider_name, relationship, transaction_date, transaction, cost, shares, value, shares_total, sec_form4_url, form4_display_timestamp, created_at, scraped_at, content_hash')
-      .eq('ticker', normalizedTicker)
-      .order('transaction_date', { ascending: false }),
+  const [ratings, insiderTrades] = await Promise.all([
+    getFinvizCompanyRatings(client, ticker),
+    getFinvizCompanyInsiderTrades(client, ticker),
   ])
+  return { ratings, insiderTrades }
+}
 
-  for (const result of [ratingsResult, insiderResult]) {
-    if (result.error) throw result.error
-  }
+export async function getFinvizCompanyRatings(client: SupabaseClient, ticker: string): Promise<FinvizAnalystRating[]> {
+  const normalizedTicker = ticker.toUpperCase()
+  const { data, error } = await client.from('finviz_analyst_ratings')
+    .select('id, ticker, source_id, rating_date, action, analyst, rating_change, price_target_change, created_at, scraped_at, content_hash')
+    .eq('ticker', normalizedTicker)
+    .order('rating_date', { ascending: false })
 
-  return {
-    ratings: (ratingsResult.data ?? []) as FinvizAnalystRating[],
-    insiderTrades: (insiderResult.data ?? []) as FinvizInsiderTrade[],
-  }
+  if (error) throw error
+  return (data ?? []) as FinvizAnalystRating[]
+}
+
+export async function getFinvizCompanyInsiderTrades(client: SupabaseClient, ticker: string): Promise<FinvizInsiderTrade[]> {
+  const normalizedTicker = ticker.toUpperCase()
+  const { data, error } = await client.from('finviz_insider_trades')
+    .select('id, ticker, source_id, insider_name, relationship, transaction_date, transaction, cost, shares, value, shares_total, sec_form4_url, form4_display_timestamp, created_at, scraped_at, content_hash')
+    .eq('ticker', normalizedTicker)
+    .order('transaction_date', { ascending: false })
+
+  if (error) throw error
+  return (data ?? []) as FinvizInsiderTrade[]
 }
 
 export async function getFinvizCompanyNews(client: SupabaseClient, ticker: string): Promise<FinvizNewsItem[]> {

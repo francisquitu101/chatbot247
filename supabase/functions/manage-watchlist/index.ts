@@ -8,7 +8,7 @@ Deno.serve(async (request) => {
   if (request.method !== 'POST') return errorResponse('METHOD_NOT_ALLOWED', 'Use POST', 405, request)
 
   try {
-    await requireAuthenticatedUser(request)
+    const user = await requireAuthenticatedUser(request)
     const body = await readJson(request)
     if (!body) return errorResponse('INVALID_JSON', 'Request body must be a JSON object', 400, request)
 
@@ -26,17 +26,25 @@ Deno.serve(async (request) => {
         .select('id, ticker, company_name, enabled, created_at')
         .single()
       if (error) throw error
+      const { error: watchlistError } = await client
+        .from('user_watchlist')
+        .upsert({ user_id: user.id, ticker }, { onConflict: 'user_id,ticker' })
+      if (watchlistError) throw watchlistError
       return ok(data, request)
     }
 
     const { error } = await client
-      .from('tracked_stocks')
-      .update({ enabled: false })
+      .from('user_watchlist')
+      .delete()
+      .eq('user_id', user.id)
       .eq('ticker', ticker)
     if (error) throw error
     return ok({ ticker, enabled: false }, request)
   } catch (error) {
     const message = error instanceof Error ? error.message : ''
+    if (message && message !== 'AUTHORIZATION_REQUIRED' && message !== 'INVALID_ACCESS_TOKEN') {
+      console.error('manage-watchlist failed:', message)
+    }
     if (message === 'AUTHORIZATION_REQUIRED' || message === 'INVALID_ACCESS_TOKEN') {
       return errorResponse('UNAUTHORIZED', 'A valid Supabase access token is required', 401, request)
     }

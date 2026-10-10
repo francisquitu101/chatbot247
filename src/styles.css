@@ -1856,73 +1856,150 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   font-weight: 700;
 }
 
-.global-analysis-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 9px;
-}
-
-.global-analysis-sentiment,
-.global-analysis-card {
-  min-width: 0;
-  padding: 13px;
-  border: 1px solid rgba(19, 33, 39, 0.08);
-  border-radius: 11px;
+.institutional-report {
+  width: min(100%, 720px);
+  margin: 12px auto 0;
+  padding: 34px 40px;
+  border: 1px solid #dce5e0;
   background: #fff;
+  box-shadow: 0 12px 30px rgba(18, 35, 31, 0.07);
+  color: #26362f;
+  font-family: Georgia, 'Times New Roman', serif;
+  line-height: 1.65;
 }
 
-.global-analysis-sentiment {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  min-height: 104px;
-  border-left: 3px solid #89948e;
+.institutional-report-cover {
+  padding-bottom: 20px;
+  border-bottom: 2px solid #183c3c;
 }
 
-.global-analysis-sentiment > span,
-.global-analysis-card > span {
-  color: #78847f;
+.institutional-report-brand {
+  margin-bottom: 14px !important;
+  color: #64736c !important;
+  font-family: Arial, sans-serif;
+  font-size: 9px !important;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.institutional-report-cover h2 {
+  margin: 12px 0 6px;
+  color: #1b2926;
+  font-size: 27px;
+  letter-spacing: -0.035em;
+  line-height: 1.2;
+}
+
+.institutional-report-cover > p {
+  margin: 5px 0 0;
+  color: #63716a;
+  font-family: Arial, sans-serif;
+  font-size: 11px;
+}
+
+.report-sentiment {
+  display: inline-flex;
+  padding: 4px 8px;
+  border: 1px solid #d8e0dc;
+  border-radius: 999px;
+  font-family: Arial, sans-serif;
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.13em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
-.global-analysis-sentiment > strong {
-  margin-top: 8px;
-  font-size: 22px;
-  letter-spacing: -0.04em;
+.report-sentiment.sentiment-bullish { border-color: #9bc7ad; background: #eff8f2; color: #11643f; }
+.report-sentiment.sentiment-bearish { border-color: #e4b5b5; background: #fff4f3; color: #a92e36; }
+.report-sentiment.sentiment-neutral { border-color: #cbd6dc; background: #f4f7f9; color: #465867; }
+
+.report-data-counts { color: #7a8680 !important; }
+
+.institutional-report-section {
+  padding: 18px 0;
+  border-bottom: 1px solid #e4e9e6;
+  break-inside: avoid;
 }
 
-.sentiment-bullish {
-  border-left-color: #15915b;
-  background: #f0faf4;
-  color: #11643f;
+.institutional-report-section h3 {
+  margin: 0 0 9px;
+  color: #203a35;
+  font-family: Arial, sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.035em;
 }
 
-.sentiment-bearish {
-  border-left-color: #d54c4c;
-  background: #fff4f3;
-  color: #a92e36;
-}
-
-.sentiment-neutral {
-  border-left-color: #6f8191;
-  background: #f4f7f9;
-  color: #465867;
-}
-
-.global-analysis-card p {
-  margin: 8px 0 0;
+.institutional-report-section p,
+.institutional-report-section li {
   color: #3e4a45;
   font-size: 12px;
-  line-height: 1.55;
   white-space: pre-line;
 }
 
-.global-analysis-meta {
-  margin: 12px 0 0;
-  color: #7a8680;
+.institutional-report-section p { margin: 0 0 8px; }
+.institutional-report-section ul,
+.institutional-report-section ol { margin: 8px 0 0; padding-left: 22px; }
+.institutional-report-section li { margin: 5px 0; }
+
+.report-table-wrap { overflow-x: auto; }
+
+.report-metrics-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: Arial, sans-serif;
   font-size: 10px;
+}
+
+.report-metrics-table th,
+.report-metrics-table td {
+  padding: 8px;
+  border: 1px solid #dfe6e2;
+  text-align: left;
+  vertical-align: top;
+}
+
+.report-metrics-table thead { background: #f2f6f4; }
+.report-metrics-table th { color: #34463f; }
+.report-metrics-table td { color: #3e4a45; overflow-wrap: anywhere; }
+
+.report-risk-list > li { padding-left: 2px; }
+.report-risk-severity {
+  margin-left: 8px;
+  color: #60706b;
+  font-family: Arial, sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.report-risk-severity.severity-high { color: #a92e36; }
+.report-risk-severity.severity-moderate { color: #9a6727; }
+.report-risk-severity.severity-low { color: #2d7651; }
+
+.report-source-refs {
+  color: #687a71 !important;
+  font-family: Arial, sans-serif;
+  font-size: 9px !important;
+}
+
+.report-bibliography li { margin: 9px 0 !important; }
+.report-bibliography li strong,
+.report-bibliography li span,
+.report-bibliography li a { display: block; }
+.report-bibliography li span,
+.report-bibliography li a {
+  color: #66766e;
+  font-family: Arial, sans-serif;
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+.report-bibliography li a { color: #146b72; }
+
+.institutional-report-disclaimer {
+  padding-top: 14px;
+  color: #78847f;
+  font-family: Arial, sans-serif;
+  font-size: 9px;
   line-height: 1.5;
 }
 
@@ -1945,7 +2022,7 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
 }
 
 @media print {
-  @page { size: letter; margin: 0.55in; }
+  @page { size: A4; margin: 16mm; }
 
   html, body, #root {
     width: auto !important;
@@ -1955,6 +2032,25 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
     background: #fff !important;
   }
 
+  .luna-chat-shell,
+  .luna-desktop-windows {
+    display: block !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+
+  .luna-chat-shell > :not(.luna-desktop-windows),
+  .luna-desktop-windows > :not(.luna-analysis-window),
+  .luna-analysis-window > :not(.luna-report-view),
+  .luna-report-view > :not(.global-analysis-panel) {
+    display: none !important;
+  }
+
   body * { visibility: hidden !important; }
 
   .global-analysis-panel,
@@ -1962,11 +2058,16 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
     visibility: visible !important;
   }
 
+  .luna-window,
+  .luna-report-view,
   .global-analysis-panel {
-    position: fixed !important;
-    inset: 0 !important;
+    position: static !important;
+    display: block !important;
     width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
     max-width: none !important;
+    flex: none !important;
     margin: 0 !important;
     padding: 0 !important;
     overflow: visible !important;
@@ -1979,46 +2080,27 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
     -webkit-print-color-adjust: exact;
   }
 
-  .global-analysis-pdf-brand {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding-bottom: 16px;
-    border-bottom: 2px solid #12343b;
-    color: #52625c;
-    font-size: 10px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-
-  .global-analysis-pdf-brand strong {
-    color: #1e232a;
-    font-size: 18px;
-    letter-spacing: -0.04em;
-    text-transform: none;
-  }
-
-  .global-analysis-pdf-brand strong span { color: #1595a2; }
-
-  .global-analysis-heading {
-    justify-content: flex-start;
-    margin: 18px 0 22px;
-  }
-
+  .global-analysis-pdf-brand { display: none !important; }
   .global-analysis-heading > button { display: none !important; }
-  .global-analysis-heading h2 { font-size: 24px; }
-  .global-analysis-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-
-  .global-analysis-sentiment,
-  .global-analysis-card {
-    break-inside: avoid;
-    border-color: #d8e0dc !important;
-    background: #fff !important;
+  .institutional-report {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    color: #132127 !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
   }
-
-  .global-analysis-sentiment { background: #f0faf4 !important; }
-  .global-analysis-card p { font-size: 12px; line-height: 1.65; }
-  .global-analysis-meta { margin-top: 18px; font-size: 9px; }
+  .institutional-report-cover h2 { font-size: 25px; }
+  .institutional-report-section { break-inside: avoid; }
+  .report-table-wrap { overflow: visible; }
+  .report-metrics-table { font-size: 9px; }
+  .report-metrics-table th,
+  .report-metrics-table td { padding: 5px; }
+  .report-bibliography li { break-inside: avoid; }
+  .global-analysis-heading { display: none !important; }
   .global-analysis-error, .global-analysis-loading { display: none !important; }
 }
 
@@ -2574,8 +2656,8 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   .global-analysis-button,
   .global-analysis-export-button { flex: 1 1 0; }
   .global-analysis-heading h2 { font-size: 16px; }
-  .global-analysis-grid { grid-template-columns: 1fr; }
-  .global-analysis-sentiment { min-height: 80px; }
+  .institutional-report { padding: 22px 18px; }
+  .institutional-report-cover h2 { font-size: 22px; }
 
   .luna-sec-file { padding: 12px 7px; }
 

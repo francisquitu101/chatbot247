@@ -35,6 +35,17 @@ export function requireSupabaseClient() {
   return supabase
 }
 
+export async function getUserWatchlist(userId: string): Promise<string[]> {
+  const { data, error } = await requireSupabaseClient()
+    .from('user_watchlist')
+    .select('ticker')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: true })
+
+  if (error) throw error
+  return (data ?? []).map((entry) => entry.ticker)
+}
+
 export function getAuthRedirectUrl(path = '/app') {
   const configuredBase = import.meta.env.VITE_SUPABASE_AUTH_REDIRECT_URL || import.meta.env.VITE_APP_URL || window.location.origin
   const normalizedPath = path.startsWith('/') ? path : `/${path}`

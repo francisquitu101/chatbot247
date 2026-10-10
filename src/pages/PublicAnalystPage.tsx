@@ -3,9 +3,10 @@ import type { Session } from '@supabase/supabase-js'
 import { ArrowRight, Brain, ChartColumnIncreasing, Chrome, Crown, Download, ExternalLink, FileText, FolderOpen, LogOut, Newspaper, Plus, RefreshCw, Star, TrendingUp } from 'lucide-react'
 import { Navbar } from '../components/Navbar'
 import { PriceChart } from '../components/PriceChart'
+import { GlobalAnalysisReport, type GlobalTickerAnalysis } from '../components/GlobalAnalysisReport'
 import { getPrivateAnalystByTicker, getPublicAnalystByTicker } from '../lib/analystData'
-import { getFinvizCompanyActivity, getFinvizCompanyNews, getLatestTerminalActivity, type TerminalActivityEvent } from '../lib/queries/company'
-import { getAuthRedirectUrl, supabase, updateWatchlist } from '../lib/supabase'
+import { getFinvizCompanyInsiderTrades, getFinvizCompanyNews, getFinvizCompanyRatings, getLatestTerminalActivity, getSecCompanyFilings, type TerminalActivityEvent } from '../lib/queries/company'
+import { getAuthRedirectUrl, getUserWatchlist, supabase, updateWatchlist } from '../lib/supabase'
 
 const DEMO_PATTERNS = [/\[DEMO SEEDED\]/i, /demo_seed/i, /synthetic_test/i, /demo seed/i, /synthetic/i, /development test/i]
 
@@ -18,13 +19,6 @@ function cleanupDisplayText(value: string | null | undefined): string {
   if (!value) return '—'
   const trimmed = value.trim()
   return isDemoArtifact(trimmed) ? '—' : trimmed
-}
-
-function formatMarketMoleTimestamp(value: string | null | undefined) {
-  if (!value) return '—'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '—'
-  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }).format(date).replace(',', ' ·')
 }
 
 function formatFinvizTimestamp(value: string | null | undefined) {
@@ -76,6 +70,7 @@ function getRealEvidence(
     source_type?: string | null
     source_url?: string | null
     published_at?: string | null
+    raw_metadata?: Record<string, unknown> | null
   }> | undefined | null,
 ) {
   return (list ?? []).filter((item) => {
@@ -145,7 +140,7 @@ const EMPTY_STATE_COPY: Record<Exclude<AnalystApp, 'chart'>, string> = {
   analysis: 'Market analysis not yet initialized for',
 }
 
-const EMPTY_STATE_DESCRIPTION = 'Data will appear here once the background extraction finishes.'
+const EMPTY_STATE_DESCRIPTION = 'No records are currently available for this source and ticker.'
 
 type NewsBriefing =
   | { status: 'loading' }
@@ -153,27 +148,26 @@ type NewsBriefing =
   | { status: 'irrelevant' }
   | { status: 'error' }
 
-type GlobalTickerAnalysis = {
-  ticker: string
-  analysis: {
-    sentiment: 'Bullish' | 'Bearish' | 'Neutral'
-    thesis: string
-    fundamentals: string
-    market_noise: string
-  }
-  generated_at: string
-  data_counts: {
-    news: number
-    sec_filings: number
-    insider_trades: number
-    analyst_ratings: number
-  }
-}
-
 type GlobalAnalysisFreshness = {
   ticker: string
   has_new_data?: boolean
   unchanged?: boolean
+}
+
+async function getFunctionErrorMessage(error: unknown): Promise<string> {
+  if (error && typeof error === 'object' && 'context' in error) {
+    const context = error.context
+    if (context instanceof Response) {
+      const payload: unknown = await context.clone().json().catch(() => null)
+      if (payload && typeof payload === 'object' && 'error' in payload) {
+        const errorPayload = payload.error
+        if (errorPayload && typeof errorPayload === 'object' && 'message' in errorPayload && typeof errorPayload.message === 'string') {
+          return errorPayload.message
+        }
+      }
+    }
+  }
+  return getErrorMessage(error, 'The Edge Function request failed.')
 }
 
 function getExternalHttpUrl(value: string): string | null {
@@ -197,14 +191,16 @@ function DataLoadingState({ ticker }: { ticker: string }) {
 function DataEmptyState({
   ticker,
   emptyMessage,
+  errorMessage,
 }: {
   ticker: string
   emptyMessage: string
+  errorMessage?: string | null
 }) {
   return (
-    <div className="luna-data-empty" role="status">
-      <strong>{emptyMessage} {ticker}.</strong>
-      <span>{EMPTY_STATE_DESCRIPTION}</span>
+    <div className="luna-data-empty" role={errorMessage ? 'alert' : 'status'}>
+      <strong>{errorMessage ? 'Data source unavailable' : `${emptyMessage} ${ticker}.`}</strong>
+      <span>{errorMessage ?? EMPTY_STATE_DESCRIPTION}</span>
     </div>
   )
 }
@@ -232,7 +228,6 @@ export function AnalystExperienceDisplay({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [authError, setAuthError] = useState<string | null>(null)
-  const [newsError, setNewsError] = useState<string | null>(null)
   const [authBusy, setAuthBusy] = useState(false)
   const [isPro, setIsPro] = useState<boolean | null>(null)
   const [profileLoadError, setProfileLoadError] = useState<string | null>(null)
@@ -253,8 +248,17 @@ export function AnalystExperienceDisplay({
   const [newsBriefings, setNewsBriefings] = useState<Record<string, NewsBriefing>>({})
   const [data, setData] = useState<Awaited<ReturnType<typeof getPublicAnalystByTicker>> | null>(null)
   const [loadedTicker, setLoadedTicker] = useState<string | null>(null)
-  const [finvizActivity, setFinvizActivity] = useState<Awaited<ReturnType<typeof getFinvizCompanyActivity>>>({ ratings: [], insiderTrades: [] })
+  const [secFilings, setSecFilings] = useState<Awaited<ReturnType<typeof getSecCompanyFilings>>>([])
+  const [finvizRatings, setFinvizRatings] = useState<Awaited<ReturnType<typeof getFinvizCompanyRatings>>>([])
+  const [finvizInsiderTrades, setFinvizInsiderTrades] = useState<Awaited<ReturnType<typeof getFinvizCompanyInsiderTrades>>>([])
   const [finvizNews, setFinvizNews] = useState<Awaited<ReturnType<typeof getFinvizCompanyNews>>>([])
+  const [feedLoading, setFeedLoading] = useState({ sec: true, insider: true, ratings: true, news: true })
+  const [feedErrors, setFeedErrors] = useState<{ sec: string | null; insider: string | null; ratings: string | null; news: string | null }>({
+    sec: null,
+    insider: null,
+    ratings: null,
+    news: null,
+  })
   const [terminalHistory, setTerminalHistory] = useState<Record<string, TerminalActivityEvent[]>>({})
   const [terminalActivityErrors, setTerminalActivityErrors] = useState<string[]>([])
   const [tickerExtraction, setTickerExtraction] = useState<Record<string, TickerExtractionState>>({})
@@ -262,6 +266,7 @@ export function AnalystExperienceDisplay({
   const [watchlistInput, setWatchlistInput] = useState('')
   const [watchlistMessage, setWatchlistMessage] = useState<string | null>(null)
   const [watchlistOwner, setWatchlistOwner] = useState<string | null>(null)
+  const loadedWatchlistKeyRef = useRef<string | null>(null)
   const refreshTickerDataRef = useRef<((tickerToRefresh: string) => Promise<void>) | null>(null)
   const tickerScanTimeoutsRef = useRef<Record<string, number[]>>({})
   const tickerScanIntervalsRef = useRef<Record<string, number[]>>({})
@@ -294,6 +299,7 @@ export function AnalystExperienceDisplay({
   }, [ticker])
 
   useEffect(() => {
+    if (loadedWatchlistKeyRef.current === watchlistStorageKey) return
     let nextWatchlist: string[] = [(ticker ?? 'NVDA').trim().toUpperCase()]
     try {
       const storedValue: unknown = JSON.parse(localStorage.getItem(watchlistStorageKey) ?? 'null')
@@ -307,6 +313,7 @@ export function AnalystExperienceDisplay({
     } catch {
       setWatchlistMessage('Could not load your saved watchlist.')
     }
+    loadedWatchlistKeyRef.current = watchlistStorageKey
     setWatchlist(nextWatchlist)
     setActiveTicker((current) => nextWatchlist.includes(current) ? current : nextWatchlist[0])
     setWatchlistOwner(watchlistStorageKey)
@@ -320,6 +327,47 @@ export function AnalystExperienceDisplay({
       setWatchlistMessage('Could not save your watchlist in this browser.')
     }
   }, [watchlist, watchlistOwner, watchlistStorageKey])
+
+  useEffect(() => {
+    const client = supabase
+    if (!sessionUserId || !client || watchlistOwner !== watchlistStorageKey) return
+
+    let isActive = true
+    const syncWatchlist = async () => {
+      try {
+        const serverTickers = await getUserWatchlist(sessionUserId)
+        const localValue: unknown = JSON.parse(localStorage.getItem(watchlistStorageKey) ?? 'null')
+        const localTickers = Array.isArray(localValue)
+          ? localValue
+            .filter((value): value is string => typeof value === 'string')
+            .map((value) => value.trim().toUpperCase())
+            .filter((value) => /^[A-Z0-9.^=-]{1,20}$/.test(value))
+          : []
+        const mergedWatchlist = [...new Set([...serverTickers, ...localTickers])].slice(0, 10)
+        const missingTickers = mergedWatchlist.filter((value) => !serverTickers.includes(value))
+
+        if (missingTickers.length > 0) {
+          const { data: authData, error: authError } = await client.auth.getSession()
+          if (authError) throw authError
+          const accessToken = authData.session?.access_token
+          if (!accessToken) throw new Error('A valid session is required to sync your watchlist.')
+          for (const value of missingTickers) {
+            if (!isActive) return
+            await updateWatchlist('enable', value, accessToken)
+          }
+        }
+
+        if (isActive) setWatchlist(mergedWatchlist)
+      } catch (syncError) {
+        if (!isActive) return
+        console.warn('[watchlist] Account sync failed:', syncError)
+        setWatchlistMessage('Could not sync your account watchlist. Your browser copy is still available.')
+      }
+    }
+
+    void syncWatchlist()
+    return () => { isActive = false }
+  }, [sessionUserId, watchlistOwner, watchlistStorageKey])
 
   useEffect(() => {
     if ((!session || isPro === false) && watchlist.length > 1) {
@@ -536,7 +584,11 @@ export function AnalystExperienceDisplay({
       pollingInterval = window.setInterval(() => {
         void pollForTickerData().catch((pollError: unknown) => {
           console.warn(`[ticker-scan] ${nextTicker} polling failed:`, pollError)
-          appendTerminalLog(nextTicker, `[SYS] Data sync retry failed: ${getErrorMessage(pollError, 'database query failed')}`)
+          const message = getErrorMessage(pollError, 'database query failed')
+          appendTerminalLog(nextTicker, `[SYS] Data sync retry failed: ${message}`)
+          setTickerExtraction((current) => current[nextTicker]?.status === 'running'
+            ? { ...current, [nextTicker]: { status: 'error', step: current[nextTicker].step, message: `Database sync failed: ${message}` } }
+            : current)
         })
       }, 3_000)
       tickerScanIntervalsRef.current[nextTicker].push(pollingInterval)
@@ -725,7 +777,7 @@ export function AnalystExperienceDisplay({
   }
 
   async function handleGlobalAnalysis() {
-    if (!supabase || globalAnalysisBusy) return
+    if (!supabase || globalAnalysisBusy || !session) return
     setGlobalAnalysisBusy(true)
     setGlobalAnalysisError(null)
     try {
@@ -737,7 +789,7 @@ export function AnalystExperienceDisplay({
       }>('analyze-global-ticker', {
         body: { ticker: activeTicker, ...(previousAnalysis ? { since: previousAnalysis.generated_at } : {}) },
       })
-      if (invokeError) throw invokeError
+      if (invokeError) throw new Error(await getFunctionErrorMessage(invokeError))
       if (!response?.success || !response.data) {
         throw new Error(response?.error?.message ?? 'The global analysis endpoint returned no analysis.')
       }
@@ -757,7 +809,7 @@ export function AnalystExperienceDisplay({
   }
 
   useEffect(() => {
-    if (!supabase || globalAnalysisTicker !== activeTicker || !globalAnalysisGeneratedAt) {
+    if (!supabase || !session || globalAnalysisTicker !== activeTicker || !globalAnalysisGeneratedAt) {
       setGlobalAnalysisHasUpdates(null)
       setGlobalAnalysisChecking(false)
       return
@@ -776,7 +828,7 @@ export function AnalystExperienceDisplay({
         }>('analyze-global-ticker', {
           body: { ticker: activeTicker, since: globalAnalysisGeneratedAt, check_only: true },
         })
-        if (invokeError) throw invokeError
+        if (invokeError) throw new Error(await getFunctionErrorMessage(invokeError))
         if (!response?.success || !response.data || typeof response.data.has_new_data !== 'boolean') {
           throw new Error(response?.error?.message ?? 'The market data freshness check returned an invalid response.')
         }
@@ -796,26 +848,35 @@ export function AnalystExperienceDisplay({
       isMounted = false
       window.clearInterval(intervalId)
     }
-  }, [activeTicker, globalAnalysisGeneratedAt, globalAnalysisTicker])
+  }, [activeTicker, globalAnalysisGeneratedAt, globalAnalysisTicker, session])
 
   useEffect(() => {
     let isMounted = true
+    const tickerToLoad = activeTicker
 
     if (!supabase) {
       setLoading(false)
-      setLoadedTicker(activeTicker)
+      setLoadedTicker(tickerToLoad)
       setError('Supabase configuration is missing. Add VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.')
       return () => { isMounted = false }
     }
 
     const client = supabase
 
-    async function loadAnalyst(tickerToLoad = activeTicker) {
+    const isCurrentLoad = () => isMounted && tickerToLoad === activeTickerRef.current
+    const setFeedLoadingState = (feed: keyof typeof feedLoading, isLoading: boolean) => {
+      if (!isCurrentLoad()) return
+      setFeedLoading((current) => ({ ...current, [feed]: isLoading }))
+    }
+    const setFeedError = (feed: keyof typeof feedErrors, message: string | null) => {
+      if (!isCurrentLoad()) return
+      setFeedErrors((current) => ({ ...current, [feed]: message }))
+    }
+    const loadAnalyst = async (tickerForAnalyst = tickerToLoad) => {
       try {
-        if (tickerToLoad === activeTickerRef.current) {
+        if (isCurrentLoad()) {
           setLoading(true)
           setError(null)
-          setNewsError(null)
         }
 
         const result = privateView
@@ -823,48 +884,77 @@ export function AnalystExperienceDisplay({
             const { data: { user }, error: userError } = await client.auth.getUser()
             if (userError) throw userError
             if (!user) throw new Error('No authenticated user found.')
-            return getPrivateAnalystByTicker(client, tickerToLoad, user.id)
+            return getPrivateAnalystByTicker(client, tickerForAnalyst, user.id)
           })()
-          : await getPublicAnalystByTicker(client, tickerToLoad)
-        const marketActivity = await getFinvizCompanyActivity(client, tickerToLoad)
-        let marketNews: Awaited<ReturnType<typeof getFinvizCompanyNews>> = []
-        let marketNewsError: string | null = null
-        try {
-          marketNews = await getFinvizCompanyNews(client, tickerToLoad)
-        } catch (newsFetchError) {
-          marketNewsError = getErrorMessage(newsFetchError, 'Finviz news request failed.')
-        }
+          : await getPublicAnalystByTicker(client, tickerForAnalyst)
 
-        if (!isMounted || tickerToLoad !== activeTickerRef.current) return
+        if (!isCurrentLoad() || tickerForAnalyst !== activeTickerRef.current) return
         setData(result)
-        setFinvizActivity(marketActivity)
-        setFinvizNews(marketNews)
-        setNewsError(marketNewsError)
       } catch (fetchError) {
-        if (!isMounted || tickerToLoad !== activeTickerRef.current) return
+        if (!isCurrentLoad() || tickerForAnalyst !== activeTickerRef.current) return
         setError(fetchError instanceof Error ? fetchError.message : 'Unable to load analyst.')
       } finally {
-        if (isMounted && tickerToLoad === activeTickerRef.current) {
-          setLoadedTicker(tickerToLoad)
+        if (isCurrentLoad() && tickerForAnalyst === activeTickerRef.current) {
           setLoading(false)
         }
       }
     }
 
-    refreshTickerDataRef.current = (tickerToRefresh) => loadAnalyst(tickerToRefresh)
+    const loadFeed = async <T,>(
+      feed: keyof typeof feedErrors,
+      fetchFeed: () => Promise<T>,
+      setResult: (value: T) => void,
+    ) => {
+      setFeedLoadingState(feed, true)
+      setFeedError(feed, null)
+      try {
+        const result = await fetchFeed()
+        if (isCurrentLoad()) setResult(result)
+      } catch (fetchError) {
+        const message = getErrorMessage(fetchError, `${feed} data request failed.`)
+        console.warn(`[ticker-data] ${tickerToLoad} ${feed} feed failed:`, fetchError)
+        setFeedError(feed, message)
+      } finally {
+        setFeedLoadingState(feed, false)
+      }
+    }
+
+    const loadAllFeeds = () => Promise.all([
+      loadFeed('sec', () => sessionUserId ? getSecCompanyFilings(client, tickerToLoad) : Promise.resolve([]), setSecFilings),
+      loadFeed('insider', () => getFinvizCompanyInsiderTrades(client, tickerToLoad), setFinvizInsiderTrades),
+      loadFeed('ratings', () => getFinvizCompanyRatings(client, tickerToLoad), setFinvizRatings),
+      loadFeed('news', () => getFinvizCompanyNews(client, tickerToLoad), setFinvizNews),
+    ]).then(() => undefined)
+    const loadAllTickerData = () => Promise.all([loadAnalyst(), loadAllFeeds()]).then(() => undefined)
+
+    refreshTickerDataRef.current = loadAllTickerData
     setData(null)
-    setFinvizActivity({ ratings: [], insiderTrades: [] })
+    setError(null)
+    setLoading(true)
+    setLoadedTicker(tickerToLoad)
+    setSecFilings([])
+    setFinvizRatings([])
+    setFinvizInsiderTrades([])
     setFinvizNews([])
-    setLoadedTicker(null)
-    void loadAnalyst()
+    setFeedErrors({ sec: null, insider: null, ratings: null, news: null })
+    setFeedLoading({ sec: true, insider: true, ratings: true, news: true })
+
+    void loadAllTickerData()
 
     const channel = client
       .channel(`analyst-live-${activeTicker}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'analyst_state' }, () => { void loadAnalyst() })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'decision_events' }, () => { void loadAnalyst() })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'analyst_jobs' }, () => { void loadAnalyst() })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'finviz_insider_trades', filter: `ticker=eq.${activeTicker}` }, () => { void loadAnalyst() })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'finviz_analyst_ratings', filter: `ticker=eq.${activeTicker}` }, () => { void loadAnalyst() })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'scraped_items', filter: `ticker=eq.${activeTicker}` }, () => {
+        void loadFeed('sec', () => sessionUserId ? getSecCompanyFilings(client, tickerToLoad) : Promise.resolve([]), setSecFilings)
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'finviz_insider_trades', filter: `ticker=eq.${activeTicker}` }, () => {
+        void loadFeed('insider', () => getFinvizCompanyInsiderTrades(client, tickerToLoad), setFinvizInsiderTrades)
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'finviz_analyst_ratings', filter: `ticker=eq.${activeTicker}` }, () => {
+        void loadFeed('ratings', () => getFinvizCompanyRatings(client, tickerToLoad), setFinvizRatings)
+      })
       .subscribe()
 
     return () => {
@@ -872,7 +962,7 @@ export function AnalystExperienceDisplay({
       refreshTickerDataRef.current = null
       void client.removeChannel(channel)
     }
-  }, [activeTicker, privateView, session?.user.id])
+  }, [activeTicker, privateView, sessionUserId])
 
   useEffect(() => {
     const client = supabase
@@ -912,7 +1002,7 @@ export function AnalystExperienceDisplay({
     }
   }, [activeTicker, appendTerminalEvents, data?.analyst.id])
 
-  const isCurrentTickerLoading = loading || loadedTicker !== activeTicker
+  const isCurrentTickerLoading = loadedTicker !== activeTicker
   const isTickerExtractionRunning = tickerExtraction[activeTicker]?.status === 'running'
   const showTickerDataLoader = isCurrentTickerLoading || isTickerExtractionRunning
   const evidenceList = getRealEvidence(loadedTicker === activeTicker ? data?.evidenceItems : undefined)
@@ -932,7 +1022,20 @@ export function AnalystExperienceDisplay({
     { id: 'analysis' as const, label: 'Analysis', Icon: FolderOpen },
   ]
 
-  const secFiles = evidenceList.filter((item) => item.source_type?.toUpperCase() === 'SEC')
+  const secFiles = [
+    ...getRealEvidence((loadedTicker === activeTicker ? secFilings : []).map((filing) => ({
+      id: filing.id,
+      title: filing.title,
+      source_type: 'SEC',
+      source_url: filing.url,
+      published_at: filing.published_at,
+      raw_metadata: filing.metadata,
+    }))),
+    ...evidenceList.filter((item) => item.source_type?.toUpperCase() === 'SEC'),
+  ].filter((file, index, files) => files.findIndex((candidate) => candidate.id === file.id) === index)
+  const currentRatings = loadedTicker === activeTicker ? finvizRatings : []
+  const currentInsiderTrades = loadedTicker === activeTicker ? finvizInsiderTrades : []
+  const currentNews = loadedTicker === activeTicker ? finvizNews : []
   const activeTitle = {
     chart: 'Price Chart',
     sec: 'SEC Filings',
@@ -1053,7 +1156,7 @@ export function AnalystExperienceDisplay({
     </aside>
   )
 
-  if (loadedTicker !== activeTicker || loading || !data || !data.analyst) {
+  if (loadedTicker !== activeTicker) {
     return (
       <div className="luna-chat-shell">
         <Navbar>{watchlistPanel}</Navbar>
@@ -1091,7 +1194,7 @@ export function AnalystExperienceDisplay({
                 {showTickerDataLoader ? (
                   <DataLoadingState ticker={activeTicker} />
                 ) : (
-                  <DataEmptyState ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY[activeApp]} />
+                  <DataEmptyState ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY[activeApp]} errorMessage={activeApp === 'analysis' ? error : null} />
                 )}
               </main>
             )}
@@ -1195,10 +1298,10 @@ export function AnalystExperienceDisplay({
 
         {activeApp === 'sec' && (
           <main className="luna-data-view luna-sec-explorer">
-            {showTickerDataLoader ? (
+            {showTickerDataLoader || feedLoading.sec ? (
               <DataLoadingState ticker={activeTicker} />
             ) : secFiles.length === 0 ? (
-              <DataEmptyState ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.sec} />
+              <DataEmptyState ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.sec} errorMessage={feedErrors.sec} />
             ) : (
               <div className="luna-sec-grid">
                 {secFiles.map((file) => {
@@ -1229,10 +1332,10 @@ export function AnalystExperienceDisplay({
 
         {activeApp === 'insider' && (
           <main className="luna-data-view">
-            {showTickerDataLoader ? (
+            {showTickerDataLoader || feedLoading.insider ? (
               <DataLoadingState ticker={activeTicker} />
-            ) : finvizActivity.insiderTrades.length === 0 ? (
-              <DataEmptyState ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.insider} />
+            ) : currentInsiderTrades.length === 0 ? (
+              <DataEmptyState ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.insider} errorMessage={feedErrors.insider} />
             ) : (
               <div className="luna-table-scroll">
                 <table className="luna-financial-table luna-insider-table">
@@ -1249,7 +1352,7 @@ export function AnalystExperienceDisplay({
                     </tr>
                   </thead>
                   <tbody>
-                    {finvizActivity.insiderTrades.map((trade) => (
+                    {currentInsiderTrades.map((trade) => (
                       <tr key={trade.id}>
                         <td>
                           <div className="luna-insider-identity">
@@ -1281,10 +1384,10 @@ export function AnalystExperienceDisplay({
 
         {activeApp === 'ratings' && (
           <main className="luna-data-view">
-            {showTickerDataLoader ? (
+            {showTickerDataLoader || feedLoading.ratings ? (
               <DataLoadingState ticker={activeTicker} />
-            ) : finvizActivity.ratings.length === 0 ? (
-              <DataEmptyState ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.ratings} />
+            ) : currentRatings.length === 0 ? (
+              <DataEmptyState ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.ratings} errorMessage={feedErrors.ratings} />
             ) : (
               <div className="luna-table-scroll">
                 <table className="luna-financial-table luna-ratings-table">
@@ -1298,7 +1401,7 @@ export function AnalystExperienceDisplay({
                     </tr>
                   </thead>
                   <tbody>
-                    {finvizActivity.ratings.map((rating) => (
+                    {currentRatings.map((rating) => (
                       <tr key={rating.id}>
                         <td>{formatFilingDate(rating.rating_date)}</td>
                         <td>{rating.action || '—'}</td>
@@ -1321,25 +1424,25 @@ export function AnalystExperienceDisplay({
                 <span className="luna-report-eyebrow">LATEST NEWS · {activeTicker}</span>
                 <h2>Market News</h2>
               </div>
-              <span className="luna-report-count">{finvizNews.length} {finvizNews.length === 1 ? 'article' : 'articles'}</span>
+              <span className="luna-report-count">{currentNews.length} {currentNews.length === 1 ? 'article' : 'articles'}</span>
             </div>
-            {newsError ? (
+            {feedErrors.news ? (
               <div className="luna-news-empty" role="status">
                 <Newspaper size={25} />
                 <strong>News stream unavailable</strong>
-                <span>{newsError}</span>
+                <span>{feedErrors.news}</span>
               </div>
-            ) : showTickerDataLoader ? (
+            ) : showTickerDataLoader || feedLoading.news ? (
               <div className="luna-news-empty">
                 <DataLoadingState ticker={activeTicker} />
               </div>
-            ) : finvizNews.length === 0 ? (
+            ) : currentNews.length === 0 ? (
               <div className="luna-news-empty">
                 <DataEmptyState ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.news} />
               </div>
             ) : (
               <div className="luna-news-list">
-                {finvizNews.map((item) => {
+                {currentNews.map((item) => {
                   const extractor = readText(item.metadata.extractor)
                   const publisher = readText(item.metadata.provider)
                     ?? readText(item.author)
@@ -1417,14 +1520,14 @@ export function AnalystExperienceDisplay({
               </div>
               <div className="global-analysis-heading">
                 <div>
-                  <span className="luna-report-eyebrow">MULTI-SOURCE MARKET VIEW</span>
-                  <h2>Global Analysis · {activeTicker}</h2>
+                  <span className="luna-report-eyebrow">INSTITUTIONAL DUE DILIGENCE</span>
+                  <h2>Equity Research Report · {activeTicker}</h2>
                 </div>
                 <button
                   type="button"
                   className="global-analysis-button"
                   onClick={() => void handleGlobalAnalysis()}
-                  disabled={globalAnalysisBusy || (globalAnalysis?.ticker === activeTicker && (globalAnalysisHasUpdates === false || globalAnalysisChecking))}
+                  disabled={!session || globalAnalysisBusy || (globalAnalysis?.ticker === activeTicker && (globalAnalysisHasUpdates === false || globalAnalysisChecking))}
                   title={globalAnalysis?.ticker === activeTicker && globalAnalysisHasUpdates === false
                     ? 'No new market data since this analysis was generated.'
                     : undefined}
@@ -1432,6 +1535,8 @@ export function AnalystExperienceDisplay({
                   <Brain size={15} className={globalAnalysisBusy ? 'spinning' : undefined} />
                   {globalAnalysisBusy
                     ? 'Analyzing…'
+                    : !session
+                      ? 'Sign in to run analysis'
                     : globalAnalysis?.ticker === activeTicker
                       ? globalAnalysisChecking
                         ? 'Checking for updates…'
@@ -1456,32 +1561,11 @@ export function AnalystExperienceDisplay({
               {!globalAnalysisBusy && globalAnalysis?.ticker !== activeTicker && (
                 showTickerDataLoader
                   ? <DataLoadingState ticker={activeTicker} />
-                  : <DataEmptyState ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.analysis} />
+                  : <DataEmptyState ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.analysis} errorMessage={error} />
               )}
               {globalAnalysis?.ticker === activeTicker && (
                 <>
-                  <div className="global-analysis-grid">
-                    <section className={`global-analysis-sentiment sentiment-${globalAnalysis.analysis.sentiment.toLowerCase()}`}>
-                      <span>OVERALL SENTIMENT</span>
-                      <strong>{globalAnalysis.analysis.sentiment}</strong>
-                    </section>
-                    <section className="global-analysis-card">
-                      <span>INVESTMENT THESIS</span>
-                      <p>{globalAnalysis.analysis.thesis}</p>
-                    </section>
-                    <section className="global-analysis-card">
-                      <span>FUNDAMENTALS</span>
-                      <p>{globalAnalysis.analysis.fundamentals}</p>
-                    </section>
-                    <section className="global-analysis-card">
-                      <span>MARKET NOISE</span>
-                      <p>{globalAnalysis.analysis.market_noise}</p>
-                    </section>
-                  </div>
-                  <p className="global-analysis-meta">
-                    Based on {globalAnalysis.data_counts.news} news · {globalAnalysis.data_counts.sec_filings} SEC filings · {globalAnalysis.data_counts.insider_trades} insider trades · {globalAnalysis.data_counts.analyst_ratings} ratings
-                    {' · '}Generated {formatMarketMoleTimestamp(globalAnalysis.generated_at)}
-                  </p>
+                  <GlobalAnalysisReport report={globalAnalysis} />
                 </>
               )}
             </section>
