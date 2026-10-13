@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getLatestTerminalActivity } from './queries/company'
-import { formatTerminalEventTimestamp, normalizeTerminalActivityRows } from './terminalActivity'
+import { compareTerminalActivityEventsNewestFirst, formatTerminalEventTimestamp, normalizeTerminalActivityRows } from './terminalActivity'
 
 function activityRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -26,12 +26,15 @@ function mockClient(result: { data: unknown; error: unknown }) {
 
 describe('terminal tracker data', () => {
   it('loads NVDA events for the requested ticker', async () => {
-    const client = mockClient({ data: [activityRow()], error: null })
+    const client = mockClient({ data: [
+      activityRow({ event_id: 'oldest', event_type: 'insider', event_date: '2026-09-21' }),
+      activityRow({ event_id: 'newest', event_type: 'news', event_date: '2026-10-13T12:43:45.000Z', event_date_only: false }),
+    ], error: null })
     const result = await getLatestTerminalActivity(client, 'nvda')
 
     expect(client.rpc).toHaveBeenCalledWith('get_public_terminal_activity', { p_ticker: 'NVDA', p_since: null })
     expect(result.errors).toEqual([])
-    expect(result.events.map((event) => event.ticker)).toEqual(['NVDA'])
+    expect(result.events.map((event) => event.id)).toEqual(['newest', 'oldest'])
   })
 
   it('loads TSLA independently rather than requiring a public analyst row', async () => {
@@ -79,7 +82,7 @@ describe('terminal event timestamps', () => {
 
     expect(formatted).toContain('Transaction date: 21 Sept 2026')
     expect(formatted).not.toContain('21:00')
-    expect(formatted).toContain('Received: 08 Oct 2026, 10:37:36 GMT-4')
+    expect(formatted).not.toContain('Received')
   })
 
   it('converts a full UTC timestamp to the application timezone and preserves its date', () => {
@@ -94,7 +97,7 @@ describe('terminal event timestamps', () => {
     expect(formatted).toContain('Published: 13 Oct 2026, 08:43:45 GMT-4')
   })
 
-  it('distinguishes publication time from database receipt time', () => {
+  it('shows only the source publication time, not the database receipt time', () => {
     const [event] = normalizeTerminalActivityRows('NVDA', [activityRow({
       event_type: 'news',
       event_date: '2026-10-13T12:43:45.000Z',
@@ -105,13 +108,7 @@ describe('terminal event timestamps', () => {
     const formatted = formatTerminalEventTimestamp(event)
 
     expect(formatted).toContain('Published: 13 Oct 2026, 08:43:45 GMT-4')
-    expect(formatted).toContain('Received: 13 Oct 2026, 09:10:00 GMT-4')
-  })
-
-  it('shows historical events with their event date and later receipt date separately', () => {
-    const [event] = normalizeTerminalActivityRows('NVDA', [activityRow()])
-    const formatted = formatTerminalEventTimestamp(event)
-    expect(formatted.indexOf('21 Sept 2026')).toBeLessThan(formatted.indexOf('08 Oct 2026'))
+    expect(formatted).not.toContain('Received')
   })
 
   it('formats an SEC filing date as a calendar date rather than a midnight timestamp', () => {
@@ -132,11 +129,11 @@ describe('terminal event timestamps', () => {
     expect(formatted).toContain('Form 4 source time: Sep 21 04:22 PM (timezone unavailable)')
   })
 
-  it('labels malformed event timestamps as unavailable and still shows a valid receipt time', () => {
+  it('labels malformed event timestamps as unavailable without adding a receipt timestamp', () => {
     const [event] = normalizeTerminalActivityRows('NVDA', [activityRow({ event_date: 'not-a-date' })])
     const formatted = formatTerminalEventTimestamp(event)
     expect(formatted).toContain('Transaction date: Date unavailable')
-    expect(formatted).toContain('Received: 08 Oct 2026, 10:37:36 GMT-4')
+    expect(formatted).not.toContain('Received')
   })
 
   it('does not normalize an impossible date-only calendar value into another date', () => {
@@ -144,8 +141,23 @@ describe('terminal event timestamps', () => {
     expect(formatTerminalEventTimestamp(event)).toContain('Transaction date: Date unavailable')
   })
 
-  it('labels both event and receipt times unavailable when neither source is valid', () => {
+  it('labels the event date unavailable when there is no valid event date', () => {
     const [event] = normalizeTerminalActivityRows('NVDA', [activityRow({ event_date: null, received_at: null })])
-    expect(formatTerminalEventTimestamp(event)).toBe('Transaction date: Date unavailable · Received: Date unavailable')
+    expect(formatTerminalEventTimestamp(event)).toBe('Transaction date: Date unavailable')
+  })
+})
+
+describe('terminal timeline ordering', () => {
+  it('sorts different event types newest to oldest by event date, with receipt time as fallback', () => {
+    const events = normalizeTerminalActivityRows('NVDA', [
+      activityRow({ event_id: 'insider', event_type: 'insider', event_date: '2026-09-21', received_at: '2026-10-13T13:00:00Z' }),
+      activityRow({ event_id: 'news', event_type: 'news', event_date: '2026-10-13T12:43:45.000Z', event_date_only: false }),
+      activityRow({ event_id: 'filing', event_type: 'filing', event_date: '2026-10-02', received_at: '2026-10-13T12:00:00Z' }),
+      activityRow({ event_id: 'unknown-old', event_type: 'rating', event_date: null, received_at: '2026-10-12T12:00:00Z' }),
+      activityRow({ event_id: 'unknown-new', event_type: 'rating', event_date: null, received_at: '2026-10-13T12:00:00Z' }),
+    ])
+    expect(events.map((event) => event.id)).toEqual(['news', 'filing', 'insider', 'unknown-new', 'unknown-old'])
+    expect([...events].sort(compareTerminalActivityEventsNewestFirst).map((event) => event.id))
+      .toEqual(['news', 'filing', 'insider', 'unknown-new', 'unknown-old'])
   })
 })

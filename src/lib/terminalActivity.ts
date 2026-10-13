@@ -39,6 +39,18 @@ function validTimestamp(value: string | null): number | null {
   return Number.isFinite(time) ? time : null
 }
 
+export function compareTerminalActivityEventsNewestFirst(left: TerminalActivityEvent, right: TerminalActivityEvent): number {
+  const leftTime = validTimestamp(left.timestamp)
+  const rightTime = validTimestamp(right.timestamp)
+  if (leftTime === null && rightTime !== null) return 1
+  if (leftTime !== null && rightTime === null) return -1
+  if (leftTime === null && rightTime === null) {
+    return (validTimestamp(right.receivedAt) ?? 0) - (validTimestamp(left.receivedAt) ?? 0)
+  }
+  if (leftTime === null || rightTime === null) return 0
+  return rightTime - leftTime
+}
+
 export function normalizeTerminalActivityRows(ticker: string, rows: unknown): TerminalActivityEvent[] {
   const normalizedTicker = ticker.trim().toUpperCase()
   if (!/^[A-Z][A-Z0-9.-]{0,9}$/.test(normalizedTicker)) {
@@ -76,11 +88,7 @@ export function normalizeTerminalActivityRows(ticker: string, rows: unknown): Te
     }]
   })
 
-  return events.sort((left, right) => {
-    const leftTime = validTimestamp(left.receivedAt) ?? validTimestamp(left.timestamp) ?? 0
-    const rightTime = validTimestamp(right.receivedAt) ?? validTimestamp(right.timestamp) ?? 0
-    return leftTime - rightTime
-  })
+  return events.sort(compareTerminalActivityEventsNewestFirst)
 }
 
 function formatCalendarDate(value: string): string {
@@ -126,7 +134,5 @@ export function formatTerminalEventTimestamp(event: TerminalActivityEvent): stri
   if (event.sourceFiledAt) {
     parts.push(`Form 4 source time: ${event.sourceFiledAt} (timezone unavailable)`)
   }
-  const received = event.receivedAt ? formatDateTime(event.receivedAt) : null
-  parts.push(received ? `Received: ${received}` : 'Received: Date unavailable')
   return parts.join(' · ')
 }

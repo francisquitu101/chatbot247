@@ -7,7 +7,7 @@ import { TechnicalCopilotPanel } from '../components/TechnicalCopilotPanel'
 import { GlobalAnalysisReport, type GlobalAnalysisHistoryEntry, type GlobalTickerAnalysis } from '../components/GlobalAnalysisReport'
 import { getPrivateAnalystByTicker, getPublicAnalystByTicker } from '../lib/analystData'
 import { getFinvizCompanyInsiderTrades, getFinvizCompanyNews, getFinvizCompanyRatings, getLatestTerminalActivity, getSecCompanyFilings, type FinvizNewsItem, type TerminalActivityEvent } from '../lib/queries/company'
-import { formatTerminalClock, formatTerminalEventTimestamp } from '../lib/terminalActivity'
+import { compareTerminalActivityEventsNewestFirst, formatTerminalClock, formatTerminalEventTimestamp } from '../lib/terminalActivity'
 import { getAuthRedirectUrl, getUserWatchlist, supabase, updateWatchlist } from '../lib/supabase'
 import type { FinvizAnalystRating, FinvizInsiderTrade } from '../types'
 
@@ -504,12 +504,8 @@ export function AnalystExperienceDisplay({
       return {
         ...current,
         [eventTicker]: [...existing, ...additions]
-          .sort((left, right) => {
-            const leftTime = Date.parse(left.receivedAt ?? left.timestamp ?? '')
-            const rightTime = Date.parse(right.receivedAt ?? right.timestamp ?? '')
-            return (Number.isFinite(leftTime) ? leftTime : 0) - (Number.isFinite(rightTime) ? rightTime : 0)
-          })
-          .slice(-200),
+          .sort(compareTerminalActivityEventsNewestFirst)
+          .slice(0, 200),
       }
     })
   }, [])
