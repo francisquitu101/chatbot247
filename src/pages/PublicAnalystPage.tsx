@@ -1137,7 +1137,6 @@ export function AnalystExperienceDisplay({
         ticker={activeTicker}
         insiderTrades={currentInsiderTrades}
         ratings={currentRatings}
-        news={currentNews}
         onCandlesChange={handleChartCandlesChange}
       />
       <TechnicalCopilotPanel key={activeTicker} ticker={activeTicker} candles={currentChartCandles} authenticated={Boolean(session)} />
@@ -1315,7 +1314,6 @@ export function AnalystExperienceDisplay({
   return (
     <div className="luna-chat-shell">
       <Navbar>{watchlistPanel}</Navbar>
-      <img className="marketmole-desktop-mascot" src="/branding/marketmole-mascot.png" alt="" aria-hidden="true" />
       <div className="luna-desktop-icons" aria-label="Fuentes de datos">
         {desktopSources.map(({ id, label, Icon }) => (
           <button

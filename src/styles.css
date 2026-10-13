@@ -376,18 +376,6 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   color: #725024;
 }
 
-.marketmole-desktop-mascot {
-  position: absolute;
-  z-index: 0;
-  right: -90px;
-  bottom: -28px;
-  width: clamp(400px, 40vw, 540px);
-  height: auto;
-  opacity: 0.92;
-  filter: drop-shadow(0 14px 16px rgba(0, 0, 0, 0.16));
-  pointer-events: none;
-}
-
 .luna-desktop-icons {
   position: absolute;
   z-index: 2;
@@ -2755,7 +2743,6 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
 }
 
 @media (max-width: 900px) {
-  .marketmole-desktop-mascot { display: none; }
   .luna-desktop-windows {
     width: min(760px, calc(100% - 120px));
     gap: 14px;

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CandlestickData, IChartApi, IPriceLine, ISeriesApi, ISeriesMarkersPluginApi, LineData, SeriesMarker, SeriesMarkerBar, Time, UTCTimestamp } from 'lightweight-charts'
-import type { FinvizNewsItem } from '../lib/queries/company'
 import { supabase } from '../lib/supabase'
 import type { FinvizAnalystRating, FinvizInsiderTrade } from '../types'
 
@@ -21,12 +20,11 @@ type PriceChartProps = {
   ticker: string
   insiderTrades: FinvizInsiderTrade[]
   ratings: FinvizAnalystRating[]
-  news: FinvizNewsItem[]
   onCandlesChange: (candles: PriceChartCandle[]) => void
 }
 
 type ChartMarkerEvent = {
-  type: 'Insider transaction' | 'Analyst rating' | 'Market news'
+  type: 'Insider transaction' | 'Analyst rating'
   name: string
   detail: string
   insiderTransaction?: 'sale' | 'purchase'
@@ -145,7 +143,6 @@ function buildChartMarkers(
   candles: CandlestickData<UTCTimestamp>[],
   insiderTrades: FinvizInsiderTrade[],
   ratings: FinvizAnalystRating[],
-  news: FinvizNewsItem[],
 ): ChartMarkerData {
   const candleTimes = candles.map((candle) => Number(candle.time)).sort((left, right) => left - right)
   const eventsByDate = new Map<string, ChartMarkerEvent[]>()
@@ -194,16 +191,6 @@ function buildChartMarkers(
     })
   }
 
-  for (const item of news) {
-    const title = item.title?.trim()
-    if (!title) continue
-    addEvent(item.published_at ?? item.scraped_at, {
-      type: 'Market news',
-      name: title,
-      detail: item.author?.trim() || 'Market news',
-    })
-  }
-
   const markerEntries: Array<{ marker: SeriesMarkerBar<UTCTimestamp>; date: string; events: ChartMarkerEvent[] }> = []
   const timeByDate = new Map<string, UTCTimestamp>()
   const eventsByCandle = new Map<number, ChartMarkerEvent[]>()
@@ -222,10 +209,9 @@ function buildChartMarkers(
     const date = new Date(candleTime * 1000).toISOString().slice(0, 10)
     const sales = events.filter((event) => event.insiderTransaction === 'sale').length
     const purchases = events.filter((event) => event.insiderTransaction === 'purchase').length
-    const newsCount = events.filter((event) => event.type === 'Market news').length
     const upgrades = events.filter((event) => event.ratingAction === 'upgrade').length
     const downgrades = events.filter((event) => event.ratingAction === 'downgrade').length
-    const categories = Number(sales + purchases > 0) + Number(newsCount > 0) + Number(upgrades + downgrades > 0)
+    const categories = Number(sales + purchases > 0) + Number(upgrades + downgrades > 0)
 
     let marker: Omit<SeriesMarkerBar<UTCTimestamp>, 'time' | 'id'>
     if (events.length === 1) {
@@ -239,12 +225,10 @@ function buildChartMarkers(
       } else if (event.ratingAction === 'downgrade') {
         marker = { position: 'belowBar', shape: 'circle', color: '#3978b8', text: 'Downgrade', size: 1 }
       } else {
-        marker = { position: 'belowBar', shape: 'square', color: '#778b99', text: 'News', size: 0.8 }
+        marker = { position: 'belowBar', shape: 'circle', color: '#3978b8', text: 'Rating', size: 1 }
       }
     } else if (categories > 1) {
       marker = { position: 'aboveBar', shape: 'circle', color: '#3978b8', text: `${events.length} Events`, size: 1 }
-    } else if (newsCount > 0) {
-      marker = { position: 'belowBar', shape: 'square', color: '#778b99', text: `${newsCount} News`, size: 1 }
     } else if (sales > 0 && purchases === 0) {
       marker = { position: 'aboveBar', shape: 'arrowDown', color: '#dc4c4c', text: `${sales} Sales`, size: 1 }
     } else if (purchases > 0 && sales === 0) {
@@ -303,7 +287,7 @@ function buildSampleCandles(ticker: string): CandlestickData<UTCTimestamp>[] {
   return candles
 }
 
-export function PriceChart({ ticker, insiderTrades, ratings, news, onCandlesChange }: PriceChartProps) {
+export function PriceChart({ ticker, insiderTrades, ratings, onCandlesChange }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick', Time> | null>(null)
@@ -491,11 +475,11 @@ export function PriceChart({ ticker, insiderTrades, ratings, news, onCandlesChan
   }, [candles])
 
   useEffect(() => {
-    const markerData = buildChartMarkers(candles, insiderTrades, ratings, news)
+    const markerData = buildChartMarkers(candles, insiderTrades, ratings)
     markerEventsRef.current = markerData.eventsByTime
     markerTimesByDateRef.current = markerData.timeByDate
     markersRef.current?.setMarkers(markerData.markers)
-  }, [chartInstance, candles, insiderTrades, ratings, news])
+  }, [chartInstance, candles, insiderTrades, ratings])
 
   useEffect(() => {
     const applyChartControl = async (control: ChartControl) => {
