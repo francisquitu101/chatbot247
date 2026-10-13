@@ -235,6 +235,26 @@ Deno.serve(async (request) => {
     if (body?.check_only === true) return ok({ ticker, has_new_data: hasNewData }, request)
     if (since && !hasNewData) return ok({ ticker, unchanged: true, has_new_data: false }, request)
 
+    const { data: previousReport, error: previousReportError } = await client
+      .from('global_ticker_analysis_reports')
+      .select('analysis, generated_at')
+      .eq('ticker', ticker)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (previousReportError) {
+      console.error(JSON.stringify({ event: 'global_analysis_previous_report_query_failed', ticker, error: previousReportError.message }))
+      return errorResponse('DATABASE_QUERY_FAILED', 'Could not load the previous analysis report.', 500, request)
+    }
+    const previousAnalysis = record(previousReport?.analysis)
+    const previousSentiment = ['Bullish', 'Bearish', 'Neutral'].includes(String(previousAnalysis.sentiment))
+      ? String(previousAnalysis.sentiment)
+      : null
+    const previousConclusion = text(previousAnalysis.conclusion, 1200)
+    const previousAssessment = previousReport && previousSentiment && previousConclusion
+      ? `PREVIOUS ASSESSMENT:\nGenerated at: ${previousReport.generated_at}\nSentiment: ${previousSentiment}\nConclusion: ${previousConclusion}\n\nContrast the new evidence with this prior position. In the Executive Summary, explicitly state whether you maintain the previous stance or change it because of new data (for example, "We maintain our Bearish stance from Oct 10 because..."). Do not claim new evidence when the underlying records do not support it.`
+      : `PREVIOUS ASSESSMENT:\nNo prior report with a valid sentiment and conclusion is available. Establish a position using the current source evidence.`
+
     const bibliography: SourceReference[] = []
     const addBibliographyEntry = (title: string, published_at: string | null, url: string | null) => {
       const ref = String(bibliography.length + 1)
@@ -282,7 +302,7 @@ Deno.serve(async (request) => {
     try {
       const payload: Record<string, unknown> = {
         model,
-        input: `${systemPrompt}\n\nTICKER: ${ticker}\nDATA AS OF: ${latestDataAt ?? 'unknown'}\n\nSOURCE EVIDENCE:\n${JSON.stringify({
+        input: `${systemPrompt}\n\n${previousAssessment}\n\nTICKER: ${ticker}\nDATA AS OF: ${latestDataAt ?? 'unknown'}\n\nSOURCE EVIDENCE:\n${JSON.stringify({
           sec_filings: filingEvidence,
           market_metrics: marketEvidence,
           insider_transactions: insiderEvidence,
@@ -350,21 +370,23 @@ Deno.serve(async (request) => {
         analyst_ratings: ratings.length,
       },
     }
-    const { error: persistError } = await client
+    const { data: persistedReport, error: persistError } = await client
       .from('global_ticker_analysis_reports')
-      .upsert({
+      .insert({
         ticker,
         analysis: result.analysis,
         bibliography: result.bibliography,
         generated_at: result.generated_at,
         data_counts: result.data_counts,
-      }, { onConflict: 'ticker' })
+      })
+      .select('id, created_at')
+      .single()
     if (persistError) {
       console.error(JSON.stringify({ event: 'global_analysis_persistence_failed', ticker, error: persistError.message }))
       return errorResponse('REPORT_PERSISTENCE_FAILED', 'The report was generated but could not be saved. Please try again.', 500, request)
     }
     console.info(JSON.stringify({ event: 'global_analysis_generated', ticker, model, data_counts: result.data_counts, bibliography_count: bibliography.length }))
-    return ok(result, request)
+    return ok({ ...result, id: persistedReport.id, created_at: persistedReport.created_at }, request)
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
       return errorResponse('AI_PROVIDER_TIMEOUT', 'The report-generation provider timed out.', 504, request)

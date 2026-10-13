@@ -2047,6 +2047,63 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   line-height: 1.65;
 }
 
+.global-analysis-history {
+  width: min(100%, 720px);
+  margin: 18px auto 0;
+  padding: 15px 18px;
+  border: 1px solid #e1e8e4;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.global-analysis-history h3 {
+  margin: 0 0 10px;
+  color: #34443d;
+  font-size: 11px;
+}
+
+.global-analysis-history ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.global-analysis-history button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 32px;
+  padding: 6px 9px;
+  border: 1px solid #dfe7e2;
+  border-radius: 6px;
+  background: #f8faf9;
+  color: #56665d;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.global-analysis-history button.selected {
+  border-color: #81a895;
+  background: #eef6f0;
+  color: #245d40;
+  font-weight: 700;
+}
+
+.global-analysis-history button span:last-child {
+  color: #86938b;
+  font-size: 8px;
+  text-transform: uppercase;
+}
+
+.global-analysis-history > p {
+  margin: 0;
+  color: #77847c;
+  font-size: 10px;
+}
+
 .institutional-report-cover {
   padding-bottom: 20px;
   border-bottom: 2px solid #183c3c;
@@ -2252,6 +2309,7 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   .luna-window-header,
   .luna-terminal-window,
   .institutional-report-actions,
+  .global-analysis-history,
   .luna-chat-shell > :not(.luna-desktop-windows),
   .luna-desktop-windows > :not(.luna-analysis-window),
   .luna-analysis-window > :not(.luna-report-view),

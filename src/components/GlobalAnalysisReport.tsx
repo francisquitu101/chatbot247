@@ -37,8 +37,15 @@ export type GlobalTickerAnalysis = {
   }
 }
 
+export type GlobalAnalysisHistoryEntry = GlobalTickerAnalysis & {
+  id: string
+  created_at: string
+}
+
 type GlobalAnalysisReportProps = {
-  report: GlobalTickerAnalysis
+  report: GlobalAnalysisHistoryEntry
+  history: GlobalAnalysisHistoryEntry[]
+  onSelectHistory: (report: GlobalAnalysisHistoryEntry) => void
 }
 
 function formatReportTimestamp(value: string | null) {
@@ -75,11 +82,12 @@ function CitationText({ text, bibliography }: { text: string; bibliography: Glob
   })
 }
 
-export function GlobalAnalysisReport({ report }: GlobalAnalysisReportProps) {
+export function GlobalAnalysisReport({ report, history, onSelectHistory }: GlobalAnalysisReportProps) {
   const { analysis, bibliography, data_counts: counts } = report
 
   return (
-    <article className="institutional-report" aria-label={`${report.ticker} due diligence report`}>
+    <>
+      <article className="institutional-report" aria-label={`${report.ticker} due diligence report`}>
       <div className="institutional-report-actions">
         <button type="button" className="global-analysis-export-button" onClick={() => window.print()}>
           <Download size={14} />
@@ -183,6 +191,27 @@ export function GlobalAnalysisReport({ report }: GlobalAnalysisReportProps) {
       <footer className="institutional-report-disclaimer">
         This report summarizes collected public information and is not investment advice. Verify source documents before relying on any finding.
       </footer>
-    </article>
+      </article>
+      <section className="global-analysis-history" aria-label={`${report.ticker} report history`}>
+        <h3>Report History</h3>
+        {history.length > 0 ? (
+          <ol>
+            {history.map((entry) => (
+              <li key={entry.id}>
+                <button
+                  type="button"
+                  className={entry.id === report.id ? 'selected' : ''}
+                  onClick={() => onSelectHistory(entry)}
+                  aria-current={entry.id === report.id ? 'page' : undefined}
+                >
+                  <span>{formatReportTimestamp(entry.generated_at)}</span>
+                  <span>{entry.analysis.sentiment}</span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        ) : <p>No saved reports yet.</p>}
+      </section>
+    </>
   )
 }

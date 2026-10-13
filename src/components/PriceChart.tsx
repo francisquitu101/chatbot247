@@ -139,6 +139,12 @@ function clearTechnicalLines(
   trendSeries.length = 0
 }
 
+function formatInsiderName(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (parts.length < 2) return name.trim() || 'Insider'
+  return `${parts[0][0]}. ${parts[parts.length - 1]}`
+}
+
 function buildChartMarkers(
   candles: CandlestickData<UTCTimestamp>[],
   insiderTrades: FinvizInsiderTrade[],
@@ -586,7 +592,9 @@ export function PriceChart({ ticker, insiderTrades, ratings, onCandlesChange }: 
             <strong>{formatMarkerDate(markerTooltip.time)}</strong>
             {markerTooltip.events.map((event, index) => (
               <span key={`${event.type}-${event.name}-${index}`}>
-                <b>{event.type}:</b> {event.name}{event.detail ? ` · ${event.detail}` : ''}
+                {event.type === 'Insider transaction'
+                  ? `Insider: ${formatInsiderName(event.name)} (${event.insiderTransaction === 'sale' ? 'Sale' : 'Purchase'})`
+                  : `Rating: ${event.name} (${event.ratingAction === 'upgrade' ? 'Upgrade' : 'Downgrade'})`}
               </span>
             ))}
           </div>

@@ -4,7 +4,7 @@ import { ArrowRight, Brain, ChartColumnIncreasing, Chrome, Crown, ExternalLink, 
 import { Navbar } from '../components/Navbar'
 import { PriceChart, type PriceChartCandle } from '../components/PriceChart'
 import { TechnicalCopilotPanel } from '../components/TechnicalCopilotPanel'
-import { GlobalAnalysisReport, type GlobalTickerAnalysis } from '../components/GlobalAnalysisReport'
+import { GlobalAnalysisReport, type GlobalAnalysisHistoryEntry, type GlobalTickerAnalysis } from '../components/GlobalAnalysisReport'
 import { getPrivateAnalystByTicker, getPublicAnalystByTicker } from '../lib/analystData'
 import { getFinvizCompanyInsiderTrades, getFinvizCompanyNews, getFinvizCompanyRatings, getLatestTerminalActivity, getSecCompanyFilings, type FinvizNewsItem, type TerminalActivityEvent } from '../lib/queries/company'
 import { getAuthRedirectUrl, getUserWatchlist, supabase, updateWatchlist } from '../lib/supabase'
@@ -195,6 +195,12 @@ function isGlobalTickerAnalysis(value: unknown): value is GlobalTickerAnalysis {
   )
 }
 
+function isGlobalAnalysisHistoryEntry(value: unknown): value is GlobalAnalysisHistoryEntry {
+  if (!isGlobalTickerAnalysis(value)) return false
+  const entry = value as Record<string, unknown>
+  return typeof entry.id === 'string' && typeof entry.created_at === 'string'
+}
+
 function removeLegacyChartCommands(report: GlobalTickerAnalysis): GlobalTickerAnalysis {
   const strip = (value: string) => value.replace(/<chart_command>[\s\S]*?<\/chart_command>/gi, '').trim()
   const analysis = report.analysis
@@ -213,6 +219,14 @@ function removeLegacyChartCommands(report: GlobalTickerAnalysis): GlobalTickerAn
       catalysts: analysis.catalysts.map(strip),
       conclusion: strip(analysis.conclusion),
     },
+  }
+}
+
+function cleanGlobalAnalysisHistoryEntry(entry: GlobalAnalysisHistoryEntry): GlobalAnalysisHistoryEntry {
+  return {
+    ...removeLegacyChartCommands(entry),
+    id: entry.id,
+    created_at: entry.created_at,
   }
 }
 
@@ -295,7 +309,8 @@ export function AnalystExperienceDisplay({
   const [profileLoadError, setProfileLoadError] = useState<string | null>(null)
   const [checkoutBusy, setCheckoutBusy] = useState(false)
   const [checkoutError, setCheckoutError] = useState<string | null>(null)
-  const [globalAnalysis, setGlobalAnalysis] = useState<GlobalTickerAnalysis | null>(null)
+  const [globalAnalysis, setGlobalAnalysis] = useState<GlobalAnalysisHistoryEntry | null>(null)
+  const [globalAnalysisHistory, setGlobalAnalysisHistory] = useState<GlobalAnalysisHistoryEntry[]>([])
   const [globalAnalysisBusy, setGlobalAnalysisBusy] = useState(false)
   const [globalAnalysisRestoreBusy, setGlobalAnalysisRestoreBusy] = useState(false)
   const [globalAnalysisError, setGlobalAnalysisError] = useState<string | null>(null)
@@ -826,7 +841,7 @@ export function AnalystExperienceDisplay({
       const previousAnalysis = globalAnalysis?.ticker === activeTicker ? globalAnalysis : null
       const { data: response, error: invokeError } = await supabase.functions.invoke<{
         success: boolean
-        data?: GlobalTickerAnalysis | GlobalAnalysisFreshness
+        data?: GlobalAnalysisHistoryEntry | GlobalAnalysisFreshness
         error?: { message?: string }
       }>('analyze-global-ticker', {
         body: { ticker: activeTicker, ...(previousAnalysis ? { since: previousAnalysis.generated_at } : {}) },
@@ -837,8 +852,13 @@ export function AnalystExperienceDisplay({
       }
       if ('unchanged' in response.data && response.data.unchanged) {
         setGlobalAnalysisHasUpdates(false)
-      } else if ('analysis' in response.data) {
-        setGlobalAnalysis(removeLegacyChartCommands(response.data))
+      } else if ('analysis' in response.data && isGlobalAnalysisHistoryEntry(response.data)) {
+        const newReport = cleanGlobalAnalysisHistoryEntry(response.data)
+        setGlobalAnalysis(newReport)
+        setGlobalAnalysisHistory((current) => [
+          newReport,
+          ...current.filter((entry) => entry.id !== newReport.id),
+        ].sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at)))
         setGlobalAnalysisHasUpdates(null)
       } else {
         throw new Error('The global analysis endpoint returned an invalid analysis.')
@@ -856,6 +876,7 @@ export function AnalystExperienceDisplay({
     const requestId = ++globalAnalysisRestoreSequenceRef.current
     let isMounted = true
     setGlobalAnalysis(null)
+    setGlobalAnalysisHistory([])
     setGlobalAnalysisError(null)
 
     if (!client || !sessionUserId) {
@@ -864,26 +885,24 @@ export function AnalystExperienceDisplay({
     }
 
     setGlobalAnalysisRestoreBusy(true)
-    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
     const reportClient = client
 
     async function restoreRecentReport() {
       try {
-        const { data: savedReport, error: restoreError } = await reportClient
+        const { data: savedReports, error: restoreError } = await reportClient
           .from('global_ticker_analysis_reports')
-          .select('ticker, analysis, bibliography, generated_at, data_counts')
+          .select('id, ticker, analysis, bibliography, generated_at, data_counts, created_at')
           .eq('ticker', tickerToRestore)
-          .gte('generated_at', cutoff)
-          .maybeSingle()
+          .order('created_at', { ascending: false })
         if (restoreError) throw restoreError
         if (!isMounted || requestId !== globalAnalysisRestoreSequenceRef.current || activeTickerRef.current !== tickerToRestore) return
-        if (savedReport) {
-          if (!isGlobalTickerAnalysis(savedReport)) {
-            throw new Error('The saved analysis report has an invalid data format.')
-          }
-          setGlobalAnalysis(removeLegacyChartCommands(savedReport))
-          setGlobalAnalysisHasUpdates(null)
+        if (!Array.isArray(savedReports) || !savedReports.every(isGlobalAnalysisHistoryEntry)) {
+          throw new Error('The saved analysis history has an invalid data format.')
         }
+        const reports = savedReports.map(cleanGlobalAnalysisHistoryEntry)
+        setGlobalAnalysisHistory(reports)
+        setGlobalAnalysis(reports[0] ?? null)
+        setGlobalAnalysisHasUpdates(null)
       } catch (restoreError) {
         if (isMounted && requestId === globalAnalysisRestoreSequenceRef.current) {
           console.error(`[global-analysis] Failed to restore saved report for ${tickerToRestore}:`, restoreError)
@@ -1663,9 +1682,11 @@ export function AnalystExperienceDisplay({
                   : <DataEmptyState ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY.analysis} errorMessage={error} />
               )}
               {globalAnalysis?.ticker === activeTicker && (
-                <>
-                  <GlobalAnalysisReport report={globalAnalysis} />
-                </>
+                <GlobalAnalysisReport
+                  report={globalAnalysis}
+                  history={globalAnalysisHistory}
+                  onSelectHistory={setGlobalAnalysis}
+                />
               )}
             </section>
           </main>
