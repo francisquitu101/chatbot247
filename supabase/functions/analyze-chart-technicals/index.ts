@@ -10,11 +10,11 @@ type Candle = {
 }
 
 type TechnicalCommand =
-  | { action: 'ADD_PRICE_LINE'; price: number; title: string; color: string }
-  | { action: 'ADD_TREND_LINE'; data: Array<{ time: string; value: number }>; color: string }
+  { action: 'ADD_PRICE_LINE'; price: number; title: string; color: string }
 
 const MAX_CANDLES = 180
-const MAX_COMMANDS = 6
+const MIN_PRICE_LEVELS = 3
+const MAX_PRICE_LEVELS = 5
 const COLOR_PATTERN = /^#(?:[\da-f]{3}|[\da-f]{6})$/i
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -61,71 +61,58 @@ function parseAnalysis(value: unknown, candles: Candle[]): { mini_brief: string;
   const rawBrief = value.mini_brief.trim()
   if (!rawBrief || rawBrief.length > 600) return null
   const miniBrief = rawBrief.split(/\r?\n/).slice(0, 3).join('\n')
-  const firstDate = candles[0].time
-  const lastDate = candles[candles.length - 1].time
   const minPrice = Math.min(...candles.map((candle) => candle.low)) * 0.75
   const maxPrice = Math.max(...candles.map((candle) => candle.high)) * 1.25
   const commands: TechnicalCommand[] = []
   let targetPrice: number | null = null
-  let hasSupport = false
-  let hasResistance = false
-  let hasTrend = false
+  let supportLevels = 0
+  let resistanceOrPivotLevels = 0
 
   for (const valueCommand of value.commands) {
-    if (!isRecord(valueCommand) || typeof valueCommand.color !== 'string' || !COLOR_PATTERN.test(valueCommand.color)) return null
     if (
-      valueCommand.action === 'ADD_PRICE_LINE' &&
-      typeof valueCommand.price === 'number' &&
-      Number.isFinite(valueCommand.price) &&
-      valueCommand.price >= minPrice &&
-      valueCommand.price <= maxPrice &&
-      typeof valueCommand.title === 'string' &&
-      valueCommand.title.trim().length > 0 &&
-      valueCommand.title.length <= 80
-    ) {
-      commands.push({
-        action: 'ADD_PRICE_LINE',
-        price: valueCommand.price,
-        title: valueCommand.title.trim(),
-        color: valueCommand.color,
-      })
-      const title = valueCommand.title.trim().toLowerCase()
-      if (title === 'target price' && ['#eab308', '#a855f7'].includes(valueCommand.color.toLowerCase())) {
-        targetPrice = valueCommand.price
-      }
-      if (title === 'support' && valueCommand.color.toLowerCase() === '#22c55e') hasSupport = true
-      if (title === 'resistance' && valueCommand.color.toLowerCase() === '#ef4444') hasResistance = true
-      continue
+      !isRecord(valueCommand) ||
+      valueCommand.action !== 'ADD_PRICE_LINE' ||
+      typeof valueCommand.color !== 'string' ||
+      !COLOR_PATTERN.test(valueCommand.color) ||
+      typeof valueCommand.price !== 'number' ||
+      !Number.isFinite(valueCommand.price) ||
+      valueCommand.price < minPrice ||
+      valueCommand.price > maxPrice ||
+      typeof valueCommand.title !== 'string' ||
+      valueCommand.title.trim().length === 0 ||
+      valueCommand.title.length > 80
+    ) return null
+
+    const title = valueCommand.title.trim()
+    const normalizedTitle = title.toLowerCase()
+    const color = valueCommand.color.toLowerCase()
+    if (normalizedTitle === 'target price') {
+      if (targetPrice !== null || !['#eab308', '#a855f7'].includes(color)) return null
+      targetPrice = valueCommand.price
+    } else if (normalizedTitle === 'support') {
+      if (color !== '#22c55e') return null
+      supportLevels += 1
+    } else if (normalizedTitle === 'resistance') {
+      if (color !== '#ef4444') return null
+      resistanceOrPivotLevels += 1
+    } else if (normalizedTitle === 'pivot') {
+      if (!['#ef4444', '#64748b'].includes(color)) return null
+      resistanceOrPivotLevels += 1
+    } else {
+      return null
     }
-    if (valueCommand.action === 'ADD_TREND_LINE' && Array.isArray(valueCommand.data) && valueCommand.data.length >= 2 && valueCommand.data.length <= 20) {
-      const data: Array<{ time: string; value: number }> = []
-      for (const valuePoint of valueCommand.data) {
-        if (
-          !isRecord(valuePoint) ||
-          !isIsoDate(valuePoint.time) ||
-          valuePoint.time < firstDate ||
-          valuePoint.time > lastDate ||
-          typeof valuePoint.value !== 'number' ||
-          !Number.isFinite(valuePoint.value) ||
-          valuePoint.value < minPrice ||
-          valuePoint.value > maxPrice
-        ) return null
-        data.push({ time: valuePoint.time, value: valuePoint.value })
-      }
-      if (data.some((point, index) => index > 0 && data[index - 1].time >= point.time)) return null
-      commands.push({ action: 'ADD_TREND_LINE', data, color: valueCommand.color })
-      if (valueCommand.color.toLowerCase() === '#3b82f6') hasTrend = true
-      continue
-    }
-    return null
+    commands.push({ action: 'ADD_PRICE_LINE', price: valueCommand.price, title, color: valueCommand.color })
   }
 
   if (
-    commands.length > MAX_COMMANDS ||
+    commands.length < MIN_PRICE_LEVELS ||
+    commands.length > MAX_PRICE_LEVELS ||
+    new Set(commands.map((command) => command.price)).size !== commands.length ||
     targetPrice === null ||
-    !hasSupport ||
-    !hasResistance ||
-    !hasTrend ||
+    supportLevels < 1 ||
+    supportLevels > 2 ||
+    resistanceOrPivotLevels < 1 ||
+    resistanceOrPivotLevels > 2 ||
     !/\btarget price\b/i.test(miniBrief)
   ) return null
   const statedTarget = miniBrief.match(/\btarget price\b.{0,40}?\$?\s*([\d,]+(?:\.\d+)?)/i)?.[1]
@@ -140,40 +127,15 @@ const responseSchema = {
     commands: {
       type: 'array',
       items: {
-        anyOf: [
-          {
-            type: 'object',
-            properties: {
-              action: { type: 'string', enum: ['ADD_PRICE_LINE'] },
-              price: { type: 'number' },
-              title: { type: 'string' },
-              color: { type: 'string' },
-            },
-            required: ['action', 'price', 'title', 'color'],
-            additionalProperties: false,
-          },
-          {
-            type: 'object',
-            properties: {
-              action: { type: 'string', enum: ['ADD_TREND_LINE'] },
-              data: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    time: { type: 'string' },
-                    value: { type: 'number' },
-                  },
-                  required: ['time', 'value'],
-                  additionalProperties: false,
-                },
-              },
-              color: { type: 'string' },
-            },
-            required: ['action', 'data', 'color'],
-            additionalProperties: false,
-          },
-        ],
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['ADD_PRICE_LINE'] },
+          price: { type: 'number' },
+          title: { type: 'string' },
+          color: { type: 'string' },
+        },
+        required: ['action', 'price', 'title', 'color'],
+        additionalProperties: false,
       },
     },
   },
@@ -215,7 +177,7 @@ Deno.serve(async (request) => {
             role: 'system',
             content: [{
               type: 'input_text',
-              text: `You are a quantitative technical analyst. Analyze only the supplied chronological daily OHLC prices for ${ticker}. Always provide all four required overlays; never omit one or return an empty commands array. First calculate 14-session average true range (ATR) from the supplied OHLC series. Determine short-term direction from recent price structure, then calculate a short-term Target Price from the latest close adjusted by approximately 1 to 1.5 ATR in that direction. Ground support in a recent swing low and resistance in a recent swing high; derive a short trend line or channel from observed prices. Do not use external information or claim certainty. The mini_brief must be no more than three lines and explicitly state "Target Price $<number>" with the same value as the Target Price command, together with a brief technical justification (recent structure and volatility/ATR). Include these exact required commands: ADD_PRICE_LINE title "Target Price" in gold #eab308 or purple #a855f7; ADD_PRICE_LINE title "Support" color #22c55e; ADD_PRICE_LINE title "Resistance" color #ef4444; and ADD_TREND_LINE color #3b82f6 with at least two ascending ISO dates inside the supplied range. All levels must be positive and grounded in the supplied prices. You may return up to two additional useful overlays, for a maximum of six commands. Return strictly the required JSON schema.`,
+              text: `You are a quantitative technical analyst. Analyze only the supplied chronological daily OHLC prices for ${ticker}. Return exclusively ADD_PRICE_LINE commands for horizontal price levels and no other chart actions. Return 3 to 5 distinct, actionable levels grounded in the supplied price action: exactly one "Target Price" in gold #eab308, 1 to 2 "Support" levels in green #22c55e, and 1 to 2 "Resistance" levels in red #ef4444 or "Pivot" levels in red #ef4444 or gray #64748b. First calculate 14-session average true range (ATR). Calculate a short-term Target Price from the latest close adjusted by approximately 1 to 1.5 ATR in the direction supported by recent price structure. Select support from recent swing lows and resistance/pivots from observed swing highs or repeated turning levels. Do not use external information, invent levels, or claim certainty. The mini_brief must be no more than three lines and explicitly state "Target Price $<number>" matching the Target Price command, with concise justification from recent structure and volatility/ATR. Prices must be positive, within the supplied observed range, and distinct. Return strictly the required JSON schema.`,
             }],
           },
           {

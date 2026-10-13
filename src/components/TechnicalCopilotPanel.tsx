@@ -3,9 +3,12 @@ import { Activity, LoaderCircle, Trash2 } from 'lucide-react'
 import type { PriceChartCandle } from './PriceChart'
 import { supabase } from '../lib/supabase'
 
-type TechnicalChartCommand =
-  | { action: 'ADD_PRICE_LINE'; price: number; title: string; color: string }
-  | { action: 'ADD_TREND_LINE'; data: Array<{ time: string; value: number }>; color: string }
+type TechnicalChartCommand = {
+  action: 'ADD_PRICE_LINE'
+  price: number
+  title: string
+  color: string
+}
 
 type TechnicalAnalysisResponse = {
   mini_brief: string
@@ -24,51 +27,64 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
-function isIsoDate(value: unknown): value is string {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
-  const date = new Date(`${value}T00:00:00.000Z`)
-  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
-}
-
 function parseTechnicalAnalysis(value: unknown): TechnicalAnalysisResponse | null {
   if (!isRecord(value) || typeof value.mini_brief !== 'string' || !Array.isArray(value.commands)) return null
   const miniBrief = value.mini_brief.trim()
   if (!miniBrief || miniBrief.length > 600) return null
 
   const commands: TechnicalChartCommand[] = []
+  let targetPrice: number | null = null
+  let supportLevels = 0
+  let resistanceOrPivotLevels = 0
   for (const valueCommand of value.commands) {
-    if (!isRecord(valueCommand) || typeof valueCommand.color !== 'string' || !CHART_COLOR_PATTERN.test(valueCommand.color)) return null
     if (
-      valueCommand.action === 'ADD_PRICE_LINE' &&
-      typeof valueCommand.price === 'number' &&
-      Number.isFinite(valueCommand.price) &&
-      valueCommand.price > 0 &&
-      typeof valueCommand.title === 'string' &&
-      valueCommand.title.trim().length > 0 &&
-      valueCommand.title.length <= 80
+      !isRecord(valueCommand) ||
+      valueCommand.action !== 'ADD_PRICE_LINE' ||
+      typeof valueCommand.color !== 'string' ||
+      !CHART_COLOR_PATTERN.test(valueCommand.color) ||
+      typeof valueCommand.price !== 'number' ||
+      !Number.isFinite(valueCommand.price) ||
+      valueCommand.price <= 0 ||
+      typeof valueCommand.title !== 'string' ||
+      valueCommand.title.trim().length === 0 ||
+      valueCommand.title.length > 80
+    ) return null
+
+    const title = valueCommand.title.trim()
+    const normalizedTitle = title.toLowerCase()
+    const color = valueCommand.color.toLowerCase()
+    if (
+      normalizedTitle === 'target price' &&
+      targetPrice === null &&
+      ['#eab308', '#a855f7'].includes(color)
     ) {
-      commands.push({
-        action: 'ADD_PRICE_LINE',
-        price: valueCommand.price,
-        title: valueCommand.title.trim(),
-        color: valueCommand.color,
-      })
-      continue
+      targetPrice = valueCommand.price
+    } else if (normalizedTitle === 'support' && color === '#22c55e') {
+      supportLevels += 1
+    } else if (normalizedTitle === 'resistance' && color === '#ef4444') {
+      resistanceOrPivotLevels += 1
+    } else if (normalizedTitle === 'pivot' && ['#ef4444', '#64748b'].includes(color)) {
+      resistanceOrPivotLevels += 1
+    } else {
+      return null
     }
-    if (valueCommand.action === 'ADD_TREND_LINE' && Array.isArray(valueCommand.data) && valueCommand.data.length >= 2 && valueCommand.data.length <= 20) {
-      const data: Array<{ time: string; value: number }> = []
-      for (const valuePoint of valueCommand.data) {
-        if (!isRecord(valuePoint) || !isIsoDate(valuePoint.time) || typeof valuePoint.value !== 'number' || !Number.isFinite(valuePoint.value) || valuePoint.value <= 0) return null
-        data.push({ time: valuePoint.time, value: valuePoint.value })
-      }
-      if (data.some((point, index) => index > 0 && data[index - 1].time >= point.time)) return null
-      commands.push({ action: 'ADD_TREND_LINE', data, color: valueCommand.color })
-      continue
-    }
-    return null
+    commands.push({ action: 'ADD_PRICE_LINE', price: valueCommand.price, title, color: valueCommand.color })
   }
 
-  return commands.length <= 6 ? { mini_brief: miniBrief.split(/\r?\n/).slice(0, 3).join('\n'), commands } : null
+  if (
+    commands.length < 3 ||
+    commands.length > 5 ||
+    new Set(commands.map((command) => command.price)).size !== commands.length ||
+    targetPrice === null ||
+    supportLevels < 1 ||
+    supportLevels > 2 ||
+    resistanceOrPivotLevels < 1 ||
+    resistanceOrPivotLevels > 2 ||
+    !/\btarget price\b/i.test(miniBrief)
+  ) return null
+  const statedTarget = miniBrief.match(/\btarget price\b.{0,40}?\$?\s*([\d,]+(?:\.\d+)?)/i)?.[1]
+  if (!statedTarget || Math.abs(Number(statedTarget.replace(/,/g, '')) - targetPrice) > Math.max(targetPrice * 0.015, 0.02)) return null
+  return { mini_brief: miniBrief.split(/\r?\n/).slice(0, 3).join('\n'), commands }
 }
 
 function toIsoDate(timestamp: number): string {
@@ -151,7 +167,7 @@ export function TechnicalCopilotPanel({ ticker, candles, authenticated }: Techni
         </div>
       </div>
       <p className="technical-copilot-description">
-        Analyze recent price action and plot source-based support, resistance, and trend lines.
+        Analyze recent price action and plot key horizontal target, support, and resistance levels.
       </p>
       <div className="technical-copilot-coverage">
         <span>{ticker} · {candles.length} sessions</span>
@@ -168,7 +184,7 @@ export function TechnicalCopilotPanel({ ticker, candles, authenticated }: Techni
       </button>
       {!authenticated && <p className="technical-copilot-hint">Sign in to run technical analysis.</p>}
       {authenticated && !supabase && <p className="technical-copilot-error" role="alert">Supabase is not configured.</p>}
-      {loading && <p className="technical-copilot-status" role="status">Evaluating support, resistance, and trend structure…</p>}
+      {loading && <p className="technical-copilot-status" role="status">Evaluating target, support, resistance, and volatility levels…</p>}
       {error && <p className="technical-copilot-error" role="alert">{error}</p>}
       {analysis && (
         <section className="technical-copilot-result" aria-live="polite">
@@ -180,7 +196,7 @@ export function TechnicalCopilotPanel({ ticker, candles, authenticated }: Techni
           </div>
           <p>{analysis.mini_brief}</p>
           <span className="technical-copilot-command-count">
-            {analysis.commands.length} chart {analysis.commands.length === 1 ? 'overlay' : 'overlays'} applied
+            {analysis.commands.length} horizontal {analysis.commands.length === 1 ? 'level' : 'levels'} applied
           </span>
         </section>
       )}
