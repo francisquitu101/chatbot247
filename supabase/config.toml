@@ -443,6 +443,16 @@ enabled = true
 verify_jwt = true
 entrypoint = "./functions/capture-paypal-order/index.ts"
 
+[functions.confirm-paypal-subscription]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/confirm-paypal-subscription/index.ts"
+
+[functions.paypal-webhook]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/paypal-webhook/index.ts"
+
 [functions.stock-chart]
 enabled = true
 verify_jwt = false

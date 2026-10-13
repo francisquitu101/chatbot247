@@ -2,17 +2,54 @@ import {
   createBackendClient,
   requireAuthenticatedUser,
 } from "../_shared/supabase.ts";
-import { errorResponse, handleOptions, ok } from "../_shared/response.ts";
-import { getPayPalAccessToken, getPayPalApiUrl } from "../_shared/paypal.ts";
+import {
+  errorResponse,
+  handleOptions,
+  ok,
+} from "../_shared/response.ts";
+import {
+  getPayPalAccessToken,
+  getPayPalApiUrl,
+  getPayPalPlanId,
+} from "../_shared/paypal.ts";
 
-const CHECKOUT_AMOUNT = "6.90";
-const CHECKOUT_TITLE = "MarketMole Pro - 10 Tickers Watchlist & Advanced Charts";
 const PAYPAL_TIMEOUT_MS = 15_000;
 
-type PayPalOrder = {
+type PayPalSubscription = {
   id?: unknown;
+  status?: unknown;
   links?: Array<{ href?: unknown; rel?: unknown }>;
 };
+
+type PayPalPlan = {
+  status?: unknown;
+  billing_cycles?: Array<{
+    tenure_type?: unknown;
+    total_cycles?: unknown;
+    frequency?: {
+      interval_unit?: unknown;
+      interval_count?: unknown;
+    };
+    pricing_scheme?: {
+      fixed_price?: {
+        currency_code?: unknown;
+        value?: unknown;
+      };
+    };
+  }>;
+};
+
+function isMonthlyProPlan(plan: PayPalPlan): boolean {
+  return plan.status === "ACTIVE" &&
+    plan.billing_cycles?.length === 1 &&
+    plan.billing_cycles[0].tenure_type === "REGULAR" &&
+    plan.billing_cycles[0].total_cycles === 0 &&
+    plan.billing_cycles[0].frequency?.interval_unit === "MONTH" &&
+    plan.billing_cycles[0].frequency?.interval_count === 1 &&
+    plan.billing_cycles[0].pricing_scheme?.fixed_price?.currency_code ===
+      "USD" &&
+    plan.billing_cycles[0].pricing_scheme?.fixed_price?.value === "6.90";
+}
 
 Deno.serve(async (request) => {
   const options = handleOptions(request);
@@ -23,27 +60,19 @@ Deno.serve(async (request) => {
 
   try {
     const user = await requireAuthenticatedUser(request);
-    const clientId = Deno.env.get("PAYPAL_CLIENT_ID");
-    const clientSecret = Deno.env.get("PAYPAL_CLIENT_SECRET");
-    if (!clientId || !clientSecret) {
-      console.error(JSON.stringify({
-        event: "paypal_checkout_configuration_error",
-        code: "PAYPAL_CREDENTIALS_MISSING",
-      }));
-      return errorResponse(
-        "CHECKOUT_NOT_CONFIGURED",
-        "Checkout is not configured.",
-        500,
-        request,
-      );
-    }
+    const apiUrl = getPayPalApiUrl();
+    const planId = getPayPalPlanId();
 
     let appBaseUrl: URL;
     try {
       appBaseUrl = new URL(
         Deno.env.get("VITE_APP_BASE_URL") || "http://localhost:5173",
       );
-      if (appBaseUrl.protocol !== "https:" && appBaseUrl.hostname !== "localhost" && appBaseUrl.hostname !== "127.0.0.1") {
+      if (
+        appBaseUrl.protocol !== "https:" &&
+        appBaseUrl.hostname !== "localhost" &&
+        appBaseUrl.hostname !== "127.0.0.1"
+      ) {
         throw new Error("INVALID_APP_BASE_URL");
       }
     } catch {
@@ -55,45 +84,109 @@ Deno.serve(async (request) => {
       );
     }
 
+    const client = createBackendClient("service_role");
+    const { data: existingSubscription, error: existingError } = await client
+      .from("pro_subscriptions")
+      .select("id")
+      .eq("user_id", user.id)
+      .in("status", ["approval_pending", "active", "suspended"])
+      .limit(1)
+      .maybeSingle();
+    if (existingError) {
+      console.error(JSON.stringify({
+        event: "paypal_subscription_lookup_failed",
+        code: existingError.code ?? "SUBSCRIPTION_LOOKUP_FAILED",
+      }));
+      return errorResponse(
+        "CHECKOUT_ERROR",
+        "Unable to check your current Pro plan.",
+        500,
+        request,
+      );
+    }
+    if (existingSubscription) {
+      return errorResponse(
+        "SUBSCRIPTION_EXISTS",
+        "You already have a Pro subscription awaiting approval or in progress.",
+        409,
+        request,
+      );
+    }
+
+    const accessToken = await getPayPalAccessToken();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), PAYPAL_TIMEOUT_MS);
-    let paypalOrderResponse: Response;
+    let response: Response;
     try {
-      const accessToken = await getPayPalAccessToken();
-      paypalOrderResponse = await fetch(
-        `${getPayPalApiUrl()}/v2/checkout/orders`,
+      const planResponse = await fetch(
+        `${apiUrl}/v1/billing/plans/${encodeURIComponent(planId)}`,
         {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
-            Prefer: "return=representation",
-          },
-          body: JSON.stringify({
-            intent: "CAPTURE",
-            purchase_units: [{
-              description: CHECKOUT_TITLE,
-              amount: {
-                currency_code: "USD",
-                value: CHECKOUT_AMOUNT,
-              },
-            }],
-            application_context: {
-              return_url: new URL("/checkout/success", appBaseUrl).toString(),
-              cancel_url: new URL("/checkout/failure", appBaseUrl).toString(),
-              user_action: "PAY_NOW",
-            },
-          }),
+          headers: { Authorization: `Bearer ${accessToken}` },
           signal: controller.signal,
         },
       );
+      if (!planResponse.ok) {
+        console.error(JSON.stringify({
+          event: "paypal_plan_lookup_failed",
+          status: planResponse.status,
+        }));
+        return errorResponse(
+          "CHECKOUT_NOT_CONFIGURED",
+          "The configured PayPal Pro plan could not be verified.",
+          500,
+          request,
+        );
+      }
+      const plan = await planResponse.json() as PayPalPlan;
+      if (!isMonthlyProPlan(plan)) {
+        console.error(JSON.stringify({
+          event: "paypal_plan_mismatch",
+          plan_id: planId,
+        }));
+        return errorResponse(
+          "CHECKOUT_NOT_CONFIGURED",
+          "The PayPal plan must be active and charge US$6.90 every month.",
+          500,
+          request,
+        );
+      }
+
+      response = await fetch(`${apiUrl}/v1/billing/subscriptions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          Prefer: "return=representation",
+          "PayPal-Request-Id": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          plan_id: planId,
+          custom_id: user.id,
+          application_context: {
+            brand_name: "MarketMole",
+            locale: "en-US",
+            shipping_preference: "NO_SHIPPING",
+            user_action: "SUBSCRIBE_NOW",
+            payment_method: {
+              payer_selected: "PAYPAL",
+              payee_preferred: "IMMEDIATE_PAYMENT_REQUIRED",
+            },
+            return_url: new URL("/checkout/success", appBaseUrl).toString(),
+            cancel_url: new URL("/checkout/failure", appBaseUrl).toString(),
+          },
+        }),
+        signal: controller.signal,
+      });
     } catch (error) {
       const code = error instanceof DOMException && error.name === "AbortError"
         ? "PAYPAL_TIMEOUT"
+        : error instanceof Error
+        ? error.message
         : "PAYPAL_UNAVAILABLE";
-      console.error(
-        JSON.stringify({ event: "paypal_order_creation_failed", code }),
-      );
+      console.error(JSON.stringify({
+        event: "paypal_subscription_creation_failed",
+        code,
+      }));
       return errorResponse(
         "CHECKOUT_PROVIDER_ERROR",
         "Unable to start checkout. Please try again.",
@@ -104,12 +197,10 @@ Deno.serve(async (request) => {
       clearTimeout(timeout);
     }
 
-    if (!paypalOrderResponse.ok) {
-      const providerError = await paypalOrderResponse.text();
+    if (!response.ok) {
       console.error(JSON.stringify({
-        event: "paypal_order_rejected",
-        status: paypalOrderResponse.status,
-        provider_error: providerError,
+        event: "paypal_subscription_rejected",
+        status: response.status,
       }));
       return errorResponse(
         "CHECKOUT_PROVIDER_ERROR",
@@ -119,16 +210,17 @@ Deno.serve(async (request) => {
       );
     }
 
-    const paypalOrder = await paypalOrderResponse.json() as PayPalOrder;
-    const paypalOrderId = typeof paypalOrder.id === "string"
-      ? paypalOrder.id
+    const subscription = await response.json() as PayPalSubscription;
+    const subscriptionId = typeof subscription.id === "string"
+      ? subscription.id
       : null;
-    const approvalUrl = paypalOrder.links?.find((link) => link.rel === "approve")
-      ?.href;
-    if (paypalOrderId === null || typeof approvalUrl !== "string") {
-      console.error(
-        JSON.stringify({ event: "paypal_order_invalid_response" }),
-      );
+    const approvalUrl = subscription.links?.find((link) =>
+      link.rel === "approve"
+    )?.href;
+    if (subscriptionId === null || typeof approvalUrl !== "string") {
+      console.error(JSON.stringify({
+        event: "paypal_subscription_invalid_response",
+      }));
       return errorResponse(
         "CHECKOUT_PROVIDER_ERROR",
         "The payment provider returned an invalid checkout link.",
@@ -137,15 +229,25 @@ Deno.serve(async (request) => {
       );
     }
 
-    const parsedApprovalUrl = new URL(approvalUrl);
+    let parsedApprovalUrl: URL;
+    try {
+      parsedApprovalUrl = new URL(approvalUrl);
+    } catch {
+      return errorResponse(
+        "CHECKOUT_PROVIDER_ERROR",
+        "The payment provider returned an invalid checkout link.",
+        502,
+        request,
+      );
+    }
     const approvalHost = parsedApprovalUrl.hostname.toLowerCase();
     if (
       parsedApprovalUrl.protocol !== "https:" ||
       !(approvalHost === "paypal.com" || approvalHost.endsWith(".paypal.com"))
     ) {
-      console.error(
-        JSON.stringify({ event: "paypal_order_invalid_approval_url" }),
-      );
+      console.error(JSON.stringify({
+        event: "paypal_subscription_invalid_approval_url",
+      }));
       return errorResponse(
         "CHECKOUT_PROVIDER_ERROR",
         "The payment provider returned an invalid checkout link.",
@@ -154,23 +256,62 @@ Deno.serve(async (request) => {
       );
     }
 
-    const client = createBackendClient("service_role");
-    const { error: orderError } = await client
-      .from("orders")
+    const { error: insertError } = await client
+      .from("pro_subscriptions")
       .insert({
         user_id: user.id,
-        paypal_order_id: paypalOrderId,
-        status: "pending",
-        amount: CHECKOUT_AMOUNT,
+        paypal_subscription_id: subscriptionId,
+        paypal_plan_id: planId,
+        status: subscription.status === "ACTIVE" ? "active" : "approval_pending",
       });
-    if (orderError) {
-      console.error(JSON.stringify({
-        event: "checkout_order_insert_failed",
-        code: orderError.code ?? "ORDER_INSERT_FAILED",
+    if (insertError) {
+        const cancelController = new AbortController();
+        const cancelTimeout = setTimeout(
+          () => cancelController.abort(),
+          PAYPAL_TIMEOUT_MS,
+        );
+        try {
+          const cancelResponse = await fetch(
+            `${apiUrl}/v1/billing/subscriptions/${
+              encodeURIComponent(subscriptionId)
+            }/cancel`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json",
+                "PayPal-Request-Id": crypto.randomUUID(),
+              },
+              body: JSON.stringify({
+                reason: "MarketMole could not record the subscription.",
+              }),
+              signal: cancelController.signal,
+            },
+          );
+          if (!cancelResponse.ok) {
+            console.error(JSON.stringify({
+              event: "paypal_orphan_subscription_cancel_failed",
+              status: cancelResponse.status,
+            }));
+          }
+        } catch (cancelError) {
+          console.error(JSON.stringify({
+            event: "paypal_orphan_subscription_cancel_failed",
+            code: cancelError instanceof Error
+              ? cancelError.name
+              : "CANCEL_FAILED",
+          }));
+        } finally {
+          clearTimeout(cancelTimeout);
+        }
+
+        console.error(JSON.stringify({
+          event: "paypal_subscription_record_failed",
+          code: insertError.code ?? "SUBSCRIPTION_INSERT_FAILED",
       }));
       return errorResponse(
-        "CHECKOUT_ORDER_ERROR",
-        "Unable to record the checkout. Please try again.",
+        "CHECKOUT_ERROR",
+        "Unable to record the subscription. Please contact support before retrying.",
         500,
         request,
       );
@@ -188,12 +329,26 @@ Deno.serve(async (request) => {
       );
     }
     if (code === "BACKEND_CONFIG_MISSING") {
-      console.error(
-        JSON.stringify({ event: "paypal_checkout_configuration_error", code }),
-      );
       return errorResponse(
         "CHECKOUT_NOT_CONFIGURED",
-        "Checkout is not configured.",
+        "The checkout backend is not configured.",
+        500,
+        request,
+      );
+    }
+    if (
+      code === "PAYPAL_CREDENTIALS_MISSING" ||
+      code === "PAYPAL_API_URL_MISSING" ||
+      code === "PAYPAL_API_URL_INVALID" ||
+      code === "PAYPAL_PLAN_ID_INVALID"
+    ) {
+      console.error(JSON.stringify({
+        event: "paypal_checkout_configuration_error",
+        code,
+      }));
+      return errorResponse(
+        "CHECKOUT_NOT_CONFIGURED",
+        "The recurring Pro plan is not configured.",
         500,
         request,
       );

@@ -6,7 +6,7 @@ import { TerminalLoader } from './components/TerminalLoader'
 import { PublicAnalystPage } from './pages/PublicAnalystPage'
 
 type CheckoutStatus = 'success' | 'pending' | 'failure'
-type PayPalCaptureState = 'loading' | 'completed' | 'failed' | null
+type PayPalCheckoutState = 'loading' | 'active' | 'legacy_completed' | 'pending' | 'failed' | null
 
 type AppRoute = {
   ticker: string
@@ -29,79 +29,133 @@ function routeFromLocation(): AppRoute {
 }
 
 function CheckoutReturnPage({ status, session }: { status: CheckoutStatus; session: Session | null }) {
-  const [captureState, setCaptureState] = useState<PayPalCaptureState>(null)
+  const [subscriptionState, setSubscriptionState] = useState<PayPalCheckoutState>(null)
 
   useEffect(() => {
     if (status !== 'success') return
 
     let active = true
-    const capturePayment = async () => {
-      const orderId = new URLSearchParams(window.location.search).get('token')
-      if (!supabase || !session || !orderId) {
-        if (active) setCaptureState('failed')
+    let attempts = 0
+    let retryTimer: number | undefined
+    const confirmSubscription = async () => {
+      const query = new URLSearchParams(window.location.search)
+      const subscriptionId = query.get('subscription_id')
+      const legacyOrderId = query.get('token')
+      if (!supabase || !session || (!subscriptionId && !legacyOrderId)) {
+        if (active) setSubscriptionState('failed')
         return
       }
 
-      setCaptureState('loading')
+      attempts += 1
+      if (attempts === 1) setSubscriptionState('loading')
       try {
-        const { data: response, error } = await supabase.functions.invoke<{
+        const result = subscriptionId
+          ? await supabase.functions.invoke<{
+            success: boolean
+            data?: { status?: string }
+          }>('confirm-paypal-subscription', {
+            body: { subscription_id: subscriptionId },
+          })
+          : await supabase.functions.invoke<{
           success: boolean
           data?: { status?: string }
-        }>('capture-paypal-order', { body: { order_id: orderId } })
+        }>('capture-paypal-order', { body: { order_id: legacyOrderId } })
+        const { data: response, error } = result
         if (!active) return
-        setCaptureState(!error && response?.success === true && response.data?.status === 'completed'
-          ? 'completed'
-          : 'failed')
+        if (!error && response?.success === true && response.data?.status === 'active') {
+          setSubscriptionState('active')
+        } else if (
+          !error &&
+          response?.success === true &&
+          response.data?.status === 'completed'
+        ) {
+          setSubscriptionState('legacy_completed')
+        } else if (
+          attempts < 12 &&
+          (!response?.success || response.data?.status === 'approval_pending' || error)
+        ) {
+          setSubscriptionState('pending')
+          retryTimer = window.setTimeout(() => void confirmSubscription(), 5_000)
+        } else {
+          setSubscriptionState('failed')
+        }
       } catch {
-        if (active) setCaptureState('failed')
+        if (!active) return
+        if (attempts < 12) {
+          setSubscriptionState('pending')
+          retryTimer = window.setTimeout(() => void confirmSubscription(), 5_000)
+        } else {
+          setSubscriptionState('failed')
+        }
       }
     }
 
-    void capturePayment()
-    return () => { active = false }
+    void confirmSubscription()
+    return () => {
+      active = false
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer)
+    }
   }, [session, status])
 
   const content = status === 'success'
-    ? captureState === 'completed'
+    ? subscriptionState === 'active'
       ? {
-          eyebrow: 'PAYMENT CONFIRMED',
-          title: 'Payment Successful.',
+          eyebrow: 'SUBSCRIPTION ACTIVE',
+          title: 'Welcome to Pro.',
           message: 'Welcome to MarketMole Pro!',
-          detail: 'Your PayPal payment was captured and Pro access is active.',
+          detail: 'Your monthly PayPal subscription is active. Your Watchlist now supports up to 10 tickers.',
         }
-      : captureState === 'failed'
+      : subscriptionState === 'legacy_completed'
         ? {
-            eyebrow: 'PAYMENT NOT CONFIRMED',
-            title: 'We could not confirm your payment.',
+            eyebrow: 'PAYMENT CONFIRMED',
+            title: 'Welcome to Pro.',
+            message: 'Welcome to MarketMole Pro!',
+            detail: 'Your PayPal payment was captured and Pro access is active.',
+          }
+      : subscriptionState === 'pending'
+        ? {
+            eyebrow: 'SUBSCRIPTION PENDING',
+            title: 'PayPal is still processing your approval.',
+            message: 'Pro access is not active yet.',
+            detail: 'Keep this page open briefly or return later after PayPal confirms the subscription.',
+          }
+      : subscriptionState === 'failed'
+        ? {
+            eyebrow: 'SUBSCRIPTION NOT CONFIRMED',
+            title: 'We could not confirm your subscription.',
             message: 'Pro access has not been activated.',
             detail: 'Sign in with the account used for checkout, then reload this page to retry the confirmation.',
           }
         : {
-            eyebrow: 'CAPTURING PAYMENT',
-            title: 'Confirming your payment…',
+            eyebrow: 'VERIFYING SUBSCRIPTION',
+            title: 'Confirming your PayPal subscription…',
             message: 'Please keep this page open.',
-            detail: 'PayPal approval is complete; MarketMole is securely capturing your payment.',
+            detail: 'PayPal approval is complete; MarketMole is verifying the recurring plan.',
           }
     : status === 'pending'
       ? {
-          eyebrow: 'PAYMENT PROCESSING',
-          title: 'Your payment is pending.',
-          message: 'PayPal has not completed this payment yet.',
+          eyebrow: 'SUBSCRIPTION PROCESSING',
+          title: 'Your subscription is pending.',
+          message: 'PayPal has not activated the subscription yet.',
           detail: 'You can return to MarketMole and check again later.',
         }
       : {
-          eyebrow: 'PAYMENT NOT COMPLETED',
-          title: 'We could not confirm your payment.',
-          message: 'No Pro subscription was activated.',
+          eyebrow: 'SUBSCRIPTION NOT COMPLETED',
+          title: 'We could not confirm your subscription.',
+          message: 'No Pro access was activated.',
           detail: 'You can return to MarketMole and try checkout again.',
         }
-  const displayStatus = status === 'success' && captureState === 'failed' ? 'failure' : status
-  const isCapturing = status === 'success' && (captureState === null || captureState === 'loading')
+  const displayStatus = status === 'success' && subscriptionState === 'failed'
+    ? 'failure'
+    : status === 'success' && subscriptionState === 'pending'
+      ? 'pending'
+      : status
+  const isVerifying = status === 'success' && (subscriptionState === null || subscriptionState === 'loading')
 
   return (
     <main className="checkout-return">
-      <section className={`checkout-return-card checkout-return-${displayStatus}`} aria-labelledby="checkout-return-title" aria-busy={isCapturing}>
-        <span className="checkout-return-mark" aria-hidden="true">{displayStatus === 'success' ? '✓' : displayStatus === 'pending' || isCapturing ? '…' : '!'}</span>
+      <section className={`checkout-return-card checkout-return-${displayStatus}`} aria-labelledby="checkout-return-title" aria-busy={isVerifying}>
+        <span className="checkout-return-mark" aria-hidden="true">{displayStatus === 'success' ? '✓' : displayStatus === 'pending' || isVerifying ? '…' : '!'}</span>
         <p className="checkout-return-eyebrow">{content.eyebrow}</p>
         <h1 id="checkout-return-title">{content.title}</h1>
         <p className="checkout-return-message">{content.message}</p>

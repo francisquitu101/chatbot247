@@ -8,10 +8,16 @@ import { GlobalAnalysisReport, type GlobalAnalysisHistoryEntry, type GlobalTicke
 import { getPrivateAnalystByTicker, getPublicAnalystByTicker } from '../lib/analystData'
 import { getFinvizCompanyInsiderTrades, getFinvizCompanyNews, getFinvizCompanyRatings, getLatestTerminalActivity, getSecCompanyFilings, type FinvizNewsItem, type TerminalActivityEvent } from '../lib/queries/company'
 import { compareTerminalActivityEventsNewestFirst, formatTerminalClock, formatTerminalEventTimestamp } from '../lib/terminalActivity'
-import { getAuthRedirectUrl, getUserWatchlist, supabase, updateWatchlist } from '../lib/supabase'
+import { getAuthRedirectUrl, getUserWatchlist, supabase, updateWatchlist, WatchlistError } from '../lib/supabase'
 import type { FinvizAnalystRating, FinvizInsiderTrade } from '../types'
 
 const DEMO_PATTERNS = [/\[DEMO SEEDED\]/i, /demo_seed/i, /synthetic_test/i, /demo seed/i, /synthetic/i, /development test/i]
+const FREE_WATCHLIST_LIMIT = 3
+const PRO_WATCHLIST_LIMIT = 10
+
+function isWatchlistLimitError(error: unknown): boolean {
+  return error instanceof WatchlistError && error.code === 'WATCHLIST_LIMIT_REACHED'
+}
 
 function isDemoArtifact(value: unknown): boolean {
   if (typeof value !== 'string') return false
@@ -379,7 +385,7 @@ export function AnalystExperienceDisplay({
         const validTickers = storedValue
           .filter((value): value is string => typeof value === 'string')
           .map((value) => value.trim().toUpperCase())
-          .filter((value) => /^[A-Z0-9.^=-]{1,20}$/.test(value))
+          .filter((value) => /^[A-Z][A-Z0-9.-]{0,9}$/.test(value))
         if (validTickers.length > 0) nextWatchlist = [...new Set(validTickers)].slice(0, 10)
       }
     } catch {
@@ -402,20 +408,21 @@ export function AnalystExperienceDisplay({
 
   useEffect(() => {
     const client = supabase
-    if (!sessionUserId || !client || watchlistOwner !== watchlistStorageKey) return
+    if (!sessionUserId || !client || isPro === null || watchlistOwner !== watchlistStorageKey) return
 
     let isActive = true
     const syncWatchlist = async () => {
       try {
         const serverTickers = await getUserWatchlist(sessionUserId)
+        const watchlistLimit = isPro ? PRO_WATCHLIST_LIMIT : FREE_WATCHLIST_LIMIT
         const localValue: unknown = JSON.parse(localStorage.getItem(watchlistStorageKey) ?? 'null')
         const localTickers = Array.isArray(localValue)
           ? localValue
             .filter((value): value is string => typeof value === 'string')
             .map((value) => value.trim().toUpperCase())
-            .filter((value) => /^[A-Z0-9.^=-]{1,20}$/.test(value))
+            .filter((value) => /^[A-Z][A-Z0-9.-]{0,9}$/.test(value))
           : []
-        const mergedWatchlist = [...new Set([...serverTickers, ...localTickers])].slice(0, 10)
+        const mergedWatchlist = [...new Set([...serverTickers, ...localTickers])].slice(0, watchlistLimit)
         const missingTickers = mergedWatchlist.filter((value) => !serverTickers.includes(value))
 
         if (missingTickers.length > 0) {
@@ -433,17 +440,20 @@ export function AnalystExperienceDisplay({
       } catch (syncError) {
         if (!isActive) return
         console.warn('[watchlist] Account sync failed:', syncError)
-        setWatchlistMessage('Could not sync your account watchlist. Your browser copy is still available.')
+        setWatchlistMessage(isWatchlistLimitError(syncError)
+          ? 'Upgrade to Pro for up to 10 tickers at $6.90/month.'
+          : 'Could not sync your account watchlist. Your browser copy is still available.')
       }
     }
 
     void syncWatchlist()
     return () => { isActive = false }
-  }, [sessionUserId, watchlistOwner, watchlistStorageKey])
+  }, [isPro, sessionUserId, watchlistOwner, watchlistStorageKey])
 
   useEffect(() => {
-    if ((!session || isPro === false) && watchlist.length > 1) {
-      const reducedWatchlist = [activeTicker]
+    const watchlistLimit = isPro === true ? PRO_WATCHLIST_LIMIT : FREE_WATCHLIST_LIMIT
+    if ((!session || isPro === false) && watchlist.length > watchlistLimit) {
+      const reducedWatchlist = [...new Set([activeTicker, ...watchlist])].slice(0, watchlistLimit)
       setWatchlist(reducedWatchlist)
       setWatchlistOwner(watchlistStorageKey)
     }
@@ -456,6 +466,7 @@ export function AnalystExperienceDisplay({
       return
     }
 
+    setIsPro(null)
     const client = supabase
     let active = true
     let checkoutRefreshes = 0
@@ -546,7 +557,7 @@ export function AnalystExperienceDisplay({
   function handleWatchlistSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const nextTicker = watchlistInput.trim().toUpperCase()
-    if (!/^[A-Z0-9.^=-]{1,20}$/.test(nextTicker)) {
+    if (!/^[A-Z][A-Z0-9.-]{0,9}$/.test(nextTicker)) {
       setWatchlistMessage('Enter a valid stock ticker.')
       return
     }
@@ -554,11 +565,9 @@ export function AnalystExperienceDisplay({
       setWatchlistMessage(`${nextTicker} is already in your watchlist.`)
       return
     }
-    const limit = session && isPro === true ? 10 : 1
+    const limit = isPro === true ? PRO_WATCHLIST_LIMIT : FREE_WATCHLIST_LIMIT
     if (watchlist.length >= limit) {
-      setWatchlistMessage(limit === 1
-        ? 'Upgrade to Pro to add up to 10 tickers.'
-        : 'Your Pro watchlist supports up to 10 tickers.')
+      setWatchlistMessage('Upgrade to Pro for up to 10 tickers at $6.90/month.')
       return
     }
     setWatchlist((current) => [...current, nextTicker])
@@ -763,6 +772,15 @@ export function AnalystExperienceDisplay({
     } catch (extractionError) {
       const message = getErrorMessage(extractionError, `Unable to extract data for ${nextTicker}.`)
       appendTerminalLog(nextTicker, `[SYS] Extraction failed for ${nextTicker}: ${message}`)
+      if (isWatchlistLimitError(extractionError)) {
+        setWatchlist((current) => current.filter((value) => value !== nextTicker))
+        setTickerExtraction((current) => ({
+          ...current,
+          [nextTicker]: { status: 'error', step: current[nextTicker]?.step ?? 0, message },
+        }))
+        setWatchlistMessage('Upgrade to Pro for up to 10 tickers at $6.90/month.')
+        return
+      }
       setTickerExtraction((current) => ({
         ...current,
         [nextTicker]: { status: 'error', step: current[nextTicker]?.step ?? 0, message },
@@ -1294,12 +1312,23 @@ export function AnalystExperienceDisplay({
           value={watchlistInput}
           onChange={(event) => setWatchlistInput(event.target.value)}
           placeholder="Add ticker"
-          maxLength={20}
+          maxLength={10}
           autoComplete="off"
         />
         <button type="submit" aria-label="Add ticker" title="Add ticker"><Plus size={16} /></button>
       </form>
-      <span className="luna-watchlist-count">{watchlist.length}/{session && isPro === true ? 10 : 1} TICKERS</span>
+      <span className="luna-watchlist-count">
+        {watchlist.length}/{isPro === true ? PRO_WATCHLIST_LIMIT : FREE_WATCHLIST_LIMIT} TICKERS
+        {isPro === true ? ' · PRO' : ' · FREE'}
+      </span>
+      {watchlist.length >= FREE_WATCHLIST_LIMIT && isPro !== true && (
+        <div className="luna-watchlist-upgrade">
+          <span>Unlock 10 tickers with Pro · US$6.90/month, renews until canceled</span>
+          <button type="button" onClick={handleWatchlistUpgrade} disabled={checkoutBusy}>
+            {session ? 'Upgrade to Pro' : 'Sign in to upgrade'}
+          </button>
+        </div>
+      )}
       {watchlistMessage && (
         <div className="luna-watchlist-message" role="status">
           <span>{watchlistMessage}</span>
@@ -1489,11 +1518,12 @@ export function AnalystExperienceDisplay({
               <button
                 type="button"
                 className="luna-upgrade-button"
+                aria-label="Upgrade to Pro for US$6.90 per month. Renews until canceled."
                 onClick={() => void handleUpgradeToPro()}
                 disabled={checkoutBusy}
               >
                 <Crown size={14} />
-                {checkoutBusy ? 'Opening checkout...' : 'Upgrade to Pro'}
+                {checkoutBusy ? 'Opening checkout...' : 'Upgrade to Pro · $6.90/mo'}
               </button>
             )}
             {session && profileLoadError && <span className="luna-checkout-error" role="status">{profileLoadError}</span>}

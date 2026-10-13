@@ -20,16 +20,29 @@ Deno.serve(async (request) => {
 
     const client = createBackendClient()
     if (action === 'enable') {
-      const { data, error } = await client
-        .from('tracked_stocks')
-        .upsert({ ticker, enabled: true }, { onConflict: 'ticker' })
-        .select('id, ticker, company_name, enabled, created_at')
-        .single()
-      if (error) throw error
-      const { error: watchlistError } = await client
-        .from('user_watchlist')
-        .upsert({ user_id: user.id, ticker }, { onConflict: 'user_id,ticker' })
-      if (watchlistError) throw watchlistError
+      const { data, error } = await client.rpc('add_ticker_to_user_watchlist', {
+        p_user_id: user.id,
+        p_ticker: ticker,
+      })
+      if (error) {
+        if (error.message.includes('WATCHLIST_LIMIT_REACHED')) {
+          return errorResponse(
+            'WATCHLIST_LIMIT_REACHED',
+            'Your Free plan includes 3 tickers. Upgrade to Pro for up to 10 tickers at $6.90/month.',
+            403,
+            request,
+          )
+        }
+        if (error.message.includes('INVALID_WATCHLIST_TICKER')) {
+          return errorResponse(
+            'INVALID_WATCHLIST_REQUEST',
+            'Enter a valid stock ticker.',
+            400,
+            request,
+          )
+        }
+        throw error
+      }
       return ok(data, request)
     }
 

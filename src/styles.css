@@ -299,6 +299,7 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
 
 .marketmole-navbar .luna-watchlist {
   position: relative;
+  flex-wrap: wrap;
   flex: 1 1 auto;
   min-width: 0;
   min-height: 40px;
@@ -802,6 +803,31 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   color: #79867f;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 8px;
+  white-space: nowrap;
+}
+
+.luna-watchlist-upgrade {
+  display: flex;
+  flex: 1 0 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid #f0d1a9;
+  border-radius: 8px;
+  background: #fffaf2;
+  color: #725024;
+  font-size: 10px;
+}
+
+.luna-watchlist-upgrade button {
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 999px;
+  background: #28342f;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
   white-space: nowrap;
 }
 

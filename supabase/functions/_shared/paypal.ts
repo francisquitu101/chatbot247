@@ -1,9 +1,17 @@
-const DEFAULT_PAYPAL_API_URL = "https://api-m.sandbox.paypal.com";
 const PAYPAL_TIMEOUT_MS = 15_000;
 
 export function getPayPalApiUrl(): string {
-  const configuredUrl = Deno.env.get("PAYPAL_API_URL") || DEFAULT_PAYPAL_API_URL;
-  const apiUrl = new URL(configuredUrl);
+  const configuredUrl = Deno.env.get("PAYPAL_API_URL");
+  if (!configuredUrl) {
+    throw new Error("PAYPAL_API_URL_MISSING");
+  }
+
+  let apiUrl: URL;
+  try {
+    apiUrl = new URL(configuredUrl);
+  } catch {
+    throw new Error("PAYPAL_API_URL_INVALID");
+  }
   if (
     apiUrl.protocol !== "https:" ||
     !["api-m.paypal.com", "api-m.sandbox.paypal.com"].includes(
@@ -16,6 +24,14 @@ export function getPayPalApiUrl(): string {
     throw new Error("PAYPAL_API_URL_INVALID");
   }
   return apiUrl.origin;
+}
+
+export function getPayPalPlanId(): string {
+  const planId = Deno.env.get("PAYPAL_PLAN_ID")?.trim();
+  if (!planId || !/^P-[A-Z0-9]+$/i.test(planId)) {
+    throw new Error("PAYPAL_PLAN_ID_INVALID");
+  }
+  return planId;
 }
 
 export async function getPayPalAccessToken(): Promise<string> {
