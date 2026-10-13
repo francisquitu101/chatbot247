@@ -87,6 +87,29 @@ export function GlobalAnalysisReport({ report, history, onSelectHistory }: Globa
 
   return (
     <>
+      <section className="global-analysis-history" aria-label={`${report.ticker} report history`}>
+        <div className="global-analysis-history-heading">
+          <h3>Report History</h3>
+          <span>{history.length} {history.length === 1 ? 'saved report' : 'saved reports'}</span>
+        </div>
+        {history.length > 0 ? (
+          <ol>
+            {history.map((entry, index) => (
+              <li key={entry.id}>
+                <button
+                  type="button"
+                  className={entry.id === report.id ? 'selected' : ''}
+                  onClick={() => onSelectHistory(entry)}
+                  aria-current={entry.id === report.id ? 'page' : undefined}
+                >
+                  <span>{formatReportTimestamp(entry.generated_at)}{index === 0 ? ' · Latest' : ''}</span>
+                  <span>{entry.analysis.sentiment}</span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        ) : <p>No saved reports yet.</p>}
+      </section>
       <article className="institutional-report" aria-label={`${report.ticker} due diligence report`}>
       <div className="institutional-report-actions">
         <button type="button" className="global-analysis-export-button" onClick={() => window.print()}>
@@ -192,26 +215,6 @@ export function GlobalAnalysisReport({ report, history, onSelectHistory }: Globa
         This report summarizes collected public information and is not investment advice. Verify source documents before relying on any finding.
       </footer>
       </article>
-      <section className="global-analysis-history" aria-label={`${report.ticker} report history`}>
-        <h3>Report History</h3>
-        {history.length > 0 ? (
-          <ol>
-            {history.map((entry) => (
-              <li key={entry.id}>
-                <button
-                  type="button"
-                  className={entry.id === report.id ? 'selected' : ''}
-                  onClick={() => onSelectHistory(entry)}
-                  aria-current={entry.id === report.id ? 'page' : undefined}
-                >
-                  <span>{formatReportTimestamp(entry.generated_at)}</span>
-                  <span>{entry.analysis.sentiment}</span>
-                </button>
-              </li>
-            ))}
-          </ol>
-        ) : <p>No saved reports yet.</p>}
-      </section>
     </>
   )
 }

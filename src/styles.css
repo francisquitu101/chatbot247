@@ -2048,18 +2048,32 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
 }
 
 .global-analysis-history {
+  box-sizing: border-box;
   width: min(100%, 720px);
-  margin: 18px auto 0;
-  padding: 15px 18px;
-  border: 1px solid #e1e8e4;
-  border-radius: 10px;
-  background: #fff;
+  margin: 12px auto 0;
+  padding: 13px 16px;
+  border: 1px solid #cfded5;
+  border-left: 3px solid #488568;
+  border-radius: 8px;
+  background: #f7faf8;
+}
+
+.global-analysis-history-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin-bottom: 10px;
 }
 
 .global-analysis-history h3 {
-  margin: 0 0 10px;
-  color: #34443d;
-  font-size: 11px;
+  margin: 0;
+  color: #253a30;
+  font-size: 12px;
+}
+
+.global-analysis-history-heading > span {
+  color: #738279;
+  font-size: 10px;
 }
 
 .global-analysis-history ol {
@@ -2075,25 +2089,25 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   display: flex;
   align-items: center;
   gap: 9px;
-  min-height: 32px;
-  padding: 6px 9px;
+  min-height: 36px;
+  padding: 7px 11px;
   border: 1px solid #dfe7e2;
   border-radius: 6px;
-  background: #f8faf9;
+  background: #fff;
   color: #56665d;
-  font-size: 9px;
+  font-size: 10px;
   cursor: pointer;
 }
 
 .global-analysis-history button.selected {
-  border-color: #81a895;
-  background: #eef6f0;
-  color: #245d40;
+  border-color: #559071;
+  background: #e8f3ec;
+  color: #204c35;
   font-weight: 700;
 }
 
 .global-analysis-history button span:last-child {
-  color: #86938b;
+  color: #718078;
   font-size: 8px;
   text-transform: uppercase;
 }

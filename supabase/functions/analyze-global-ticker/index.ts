@@ -252,7 +252,7 @@ Deno.serve(async (request) => {
       : null
     const previousConclusion = text(previousAnalysis.conclusion, 1200)
     const previousAssessment = previousReport && previousSentiment && previousConclusion
-      ? `PREVIOUS ASSESSMENT:\nGenerated at: ${previousReport.generated_at}\nSentiment: ${previousSentiment}\nConclusion: ${previousConclusion}\n\nContrast the new evidence with this prior position. In the Executive Summary, explicitly state whether you maintain the previous stance or change it because of new data (for example, "We maintain our Bearish stance from Oct 10 because..."). Do not claim new evidence when the underlying records do not support it.`
+      ? `PREVIOUS ASSESSMENT:\nGenerated at: ${previousReport.generated_at}\nSentiment: ${previousSentiment}\nConclusion: ${previousConclusion}\n\nMANDATORY EXECUTIVE SUMMARY OPENING: You MUST begin the Executive Summary by explicitly comparing your current position with this previous assessment. State whether you maintain, improve/upgrade, or worsen/downgrade the prior stance, and name the prior sentiment and report date. For example: "We maintain our Bearish assessment from Oct 10, as new insider sales continue..." or "We upgrade our view from Neutral to Bullish due to...". This comparison must be the opening sentence, not a later mention. Base any change on the new evidence provided; do not claim evidence that is not supported by the source records.`
       : `PREVIOUS ASSESSMENT:\nNo prior report with a valid sentiment and conclusion is available. Establish a position using the current source evidence.`
 
     const bibliography: SourceReference[] = []
