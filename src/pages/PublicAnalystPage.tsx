@@ -7,6 +7,7 @@ import { TechnicalCopilotPanel } from '../components/TechnicalCopilotPanel'
 import { GlobalAnalysisReport, type GlobalAnalysisHistoryEntry, type GlobalTickerAnalysis } from '../components/GlobalAnalysisReport'
 import { getPrivateAnalystByTicker, getPublicAnalystByTicker } from '../lib/analystData'
 import { getFinvizCompanyInsiderTrades, getFinvizCompanyNews, getFinvizCompanyRatings, getLatestTerminalActivity, getSecCompanyFilings, type FinvizNewsItem, type TerminalActivityEvent } from '../lib/queries/company'
+import { formatTerminalClock, formatTerminalEventTimestamp } from '../lib/terminalActivity'
 import { getAuthRedirectUrl, getUserWatchlist, supabase, updateWatchlist } from '../lib/supabase'
 import type { FinvizAnalystRating, FinvizInsiderTrade } from '../types'
 
@@ -36,18 +37,6 @@ function formatFinvizTimestamp(value: string | null | undefined) {
     timeZone: 'America/New_York',
     timeZoneName: 'short',
   }).format(date).replace(',', ' ·')
-}
-
-function formatTerminalTimestamp(value: string | null | undefined) {
-  if (!value) return '—'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '—'
-  return new Intl.DateTimeFormat('en-GB', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  }).format(date)
 }
 
 function formatFilingDate(value: string | null | undefined) {
@@ -132,6 +121,12 @@ type TickerExtractionState = {
   status: 'running' | 'complete' | 'error'
   step: number
   message?: string
+}
+
+type TerminalTrackerState = {
+  status: 'connecting' | 'connected' | 'polling' | 'degraded' | 'error'
+  lastCheckedAt: string | null
+  error: string | null
 }
 
 const EMPTY_STATE_COPY: Record<Exclude<AnalystApp, 'chart'>, string> = {
@@ -337,7 +332,7 @@ export function AnalystExperienceDisplay({
     news: null,
   })
   const [terminalHistory, setTerminalHistory] = useState<Record<string, TerminalActivityEvent[]>>({})
-  const [terminalActivityErrors, setTerminalActivityErrors] = useState<string[]>([])
+  const [terminalTrackerStates, setTerminalTrackerStates] = useState<Record<string, TerminalTrackerState>>({})
   const [tickerExtraction, setTickerExtraction] = useState<Record<string, TickerExtractionState>>({})
   const [watchlist, setWatchlist] = useState<string[]>([(ticker ?? 'NVDA').toUpperCase()])
   const [watchlistInput, setWatchlistInput] = useState('')
@@ -509,7 +504,11 @@ export function AnalystExperienceDisplay({
       return {
         ...current,
         [eventTicker]: [...existing, ...additions]
-          .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp))
+          .sort((left, right) => {
+            const leftTime = Date.parse(left.receivedAt ?? left.timestamp ?? '')
+            const rightTime = Date.parse(right.receivedAt ?? right.timestamp ?? '')
+            return (Number.isFinite(leftTime) ? leftTime : 0) - (Number.isFinite(rightTime) ? rightTime : 0)
+          })
           .slice(-200),
       }
     })
@@ -518,7 +517,13 @@ export function AnalystExperienceDisplay({
   const appendTerminalLog = useCallback((eventTicker: string, message: string) => {
     appendTerminalEvents(eventTicker, [{
       id: `${eventTicker}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      ticker: eventTicker,
+      type: 'system',
       timestamp: new Date().toISOString(),
+      dateOnly: false,
+      timestampLabel: 'Logged',
+      receivedAt: null,
+      sourceFiledAt: null,
       message,
     }])
   }, [appendTerminalEvents])
@@ -1075,41 +1080,115 @@ export function AnalystExperienceDisplay({
 
   useEffect(() => {
     const client = supabase
-    const analystId = data?.analyst.id
-    if (!client || !analystId) {
-      setTerminalActivityErrors([])
+    const tickerToTrack = activeTicker
+    if (!client) {
+      setTerminalTrackerStates((current) => ({
+        ...current,
+        [tickerToTrack]: { status: 'error', lastCheckedAt: null, error: 'Supabase client is not configured.' },
+      }))
       return
     }
 
     let isMounted = true
+    let refreshInFlight = false
+    let refreshPending = false
+    let realtimeConnected = false
+    let pollSucceeded = false
+    let realtimeError: string | null = null
+    let lastSuccessfulPollStartedAt: string | null = null
+    setTerminalTrackerStates((current) => ({
+      ...current,
+      [tickerToTrack]: { status: 'connecting', lastCheckedAt: null, error: null },
+    }))
+
+    const updateTrackerState = (update: Partial<TerminalTrackerState>) => {
+      setTerminalTrackerStates((current) => ({
+        ...current,
+        [tickerToTrack]: {
+          status: current[tickerToTrack]?.status ?? 'connecting',
+          lastCheckedAt: current[tickerToTrack]?.lastCheckedAt ?? null,
+          error: current[tickerToTrack]?.error ?? null,
+          ...update,
+        },
+      }))
+    }
+
     const refreshTerminalActivity = async () => {
+      if (refreshInFlight) {
+        refreshPending = true
+        return
+      }
+      refreshInFlight = true
+      const pollStartedAt = new Date().toISOString()
       try {
-        const activity = await getLatestTerminalActivity(client, activeTicker, analystId)
+        const activity = await getLatestTerminalActivity(client, tickerToTrack, lastSuccessfulPollStartedAt)
         if (!isMounted) return
-        appendTerminalEvents(activeTicker, activity.events)
-        setTerminalActivityErrors(activity.errors)
+        const checkedAt = new Date().toISOString()
+        if (activity.errors.length > 0) {
+          updateTrackerState({
+            status: realtimeConnected ? 'degraded' : 'error',
+            lastCheckedAt: checkedAt,
+            error: activity.errors.join(' · '),
+          })
+          return
+        }
+        pollSucceeded = true
+        lastSuccessfulPollStartedAt = pollStartedAt
+        appendTerminalEvents(tickerToTrack, activity.events)
+        updateTrackerState({
+          status: realtimeConnected ? 'connected' : 'polling',
+          lastCheckedAt: checkedAt,
+          error: realtimeError,
+        })
       } catch (activityError) {
         if (!isMounted) return
-        setTerminalActivityErrors([getErrorMessage(activityError, 'Unable to load terminal activity.')])
+        const message = getErrorMessage(activityError, 'Unable to load terminal activity.')
+        updateTrackerState({
+          status: realtimeConnected ? 'degraded' : 'error',
+          lastCheckedAt: new Date().toISOString(),
+          error: message,
+        })
+      } finally {
+        refreshInFlight = false
+        if (isMounted && refreshPending) {
+          refreshPending = false
+          void refreshTerminalActivity()
+        }
       }
     }
 
     void refreshTerminalActivity()
     const intervalId = window.setInterval(() => void refreshTerminalActivity(), 60_000)
     const channel = client
-      .channel(`terminal-activity-${activeTicker}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'scraped_items', filter: `ticker=eq.${activeTicker}` }, () => { void refreshTerminalActivity() })
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'finviz_insider_trades', filter: `ticker=eq.${activeTicker}` }, () => { void refreshTerminalActivity() })
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'analyst_evidence', filter: `analyst_id=eq.${analystId}` }, () => { void refreshTerminalActivity() })
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'finviz_analyst_ratings', filter: `ticker=eq.${activeTicker}` }, () => { void refreshTerminalActivity() })
-      .subscribe()
+      .channel(`terminal-activity-${tickerToTrack}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'scraped_items', filter: `ticker=eq.${tickerToTrack}` }, () => { void refreshTerminalActivity() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'finviz_insider_trades', filter: `ticker=eq.${tickerToTrack}` }, () => { void refreshTerminalActivity() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'finviz_analyst_ratings', filter: `ticker=eq.${tickerToTrack}` }, () => { void refreshTerminalActivity() })
+      .subscribe((status, subscriptionError) => {
+        if (!isMounted) return
+        if (status === 'SUBSCRIBED') {
+          realtimeConnected = true
+          realtimeError = null
+          updateTrackerState({
+            status: pollSucceeded ? 'connected' : 'connecting',
+            error: null,
+          })
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          realtimeConnected = false
+          realtimeError = `Realtime ${status.toLowerCase().replace('_', ' ')}${subscriptionError instanceof Error ? `: ${subscriptionError.message}` : ''}; polling continues.`
+          updateTrackerState({
+            status: pollSucceeded ? 'polling' : 'error',
+            error: realtimeError,
+          })
+        }
+      })
 
     return () => {
       isMounted = false
       window.clearInterval(intervalId)
       void client.removeChannel(channel)
     }
-  }, [activeTicker, appendTerminalEvents, data?.analyst.id])
+  }, [activeTicker, appendTerminalEvents])
 
   const isCurrentTickerLoading = loadedTicker !== activeTicker
   const isTickerExtractionRunning = tickerExtraction[activeTicker]?.status === 'running'
@@ -1122,6 +1201,18 @@ export function AnalystExperienceDisplay({
   const statusLabel = isStaleProcessingState ? '' : getStatusLabel(processingStatus)
   const statusTone = statusLabel === 'ERROR' ? 'error' : 'active'
   const currentTerminalHistory = terminalHistory[activeTicker] ?? []
+  const currentFinancialEvents = currentTerminalHistory.filter((event) => event.type !== 'system')
+  const latestReceivedEvent = currentFinancialEvents.reduce<TerminalActivityEvent | null>((latest, event) => {
+    if (!latest) return event
+    const eventTime = Date.parse(event.receivedAt ?? event.timestamp ?? '')
+    const latestTime = Date.parse(latest.receivedAt ?? latest.timestamp ?? '')
+    return eventTime > latestTime ? event : latest
+  }, null)
+  const currentTrackerState = terminalTrackerStates[activeTicker] ?? {
+    status: 'connecting' as const,
+    lastCheckedAt: null,
+    error: null,
+  }
   const desktopSources = [
     { id: 'chart' as const, label: 'Price Chart', Icon: TrendingUp },
     { id: 'sec' as const, label: 'SEC Filings', Icon: FolderOpen },
@@ -1238,7 +1329,21 @@ export function AnalystExperienceDisplay({
         <span className="luna-titlebar-spacer" aria-hidden="true" />
       </div>
       <div className="luna-terminal-content">
-        <div className="luna-terminal-preview-label">LIVE ACTIVITY · AMERICA/NEW_YORK</div>
+        <div className={`luna-terminal-preview-label tracker-${currentTrackerState.status}`}>
+          <strong>{activeTicker} TRACKER · {currentTrackerState.status.toUpperCase()}</strong>
+          <span>Application timezone: America/New_York</span>
+          <span>Last checked: {formatTerminalClock(currentTrackerState.lastCheckedAt)}</span>
+          <span>
+            {latestReceivedEvent
+              ? `Last event: ${formatTerminalEventTimestamp(latestReceivedEvent)}`
+              : currentTrackerState.status === 'error' || currentTrackerState.status === 'degraded'
+                ? 'Event state unavailable because the tracker has an error.'
+              : currentTrackerState.lastCheckedAt
+                ? 'No events found for this ticker.'
+                : 'Waiting for the first data check.'}
+          </span>
+          {currentTrackerState.error && <span className="tracker-error-detail">{currentTrackerState.error}</span>}
+        </div>
         {!data && !tickerExtraction[activeTicker] && (
           <>
             <p className="luna-terminal-system"><span>&gt;</span> [SYS] Initializing data streams for {activeTicker}...</p>
@@ -1265,17 +1370,11 @@ export function AnalystExperienceDisplay({
         )}
         {currentTerminalHistory.map((event) => (
           <p key={event.id}>
-            <span>[{formatTerminalTimestamp(event.timestamp)}]</span> &gt; {event.message}
+            <span>[{formatTerminalEventTimestamp(event)}]</span> &gt; {event.message}
           </p>
         ))}
         {loading && <p className="luna-terminal-system"><span>&gt;</span> [SYS] Loading analyst data...</p>}
         {error && <p className="luna-terminal-error"><span>&gt;</span> Feed unavailable: {error}</p>}
-        {currentTerminalHistory.length === 0 && terminalActivityErrors.length === 0 && data && !loading && (
-          <p className="luna-terminal-empty"><span>&gt;</span> Awaiting market activity...</p>
-        )}
-        {terminalActivityErrors.map((message) => (
-          <p className="luna-terminal-error" key={message}><span>[{formatTerminalTimestamp(new Date().toISOString())}]</span> &gt; Feed unavailable: {message}</p>
-        ))}
         <div className="luna-terminal-cursor" aria-hidden="true" />
       </div>
     </aside>

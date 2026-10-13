@@ -1320,6 +1320,20 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      get_public_terminal_activity: {
+        Args: { p_since?: string | null; p_ticker: string }
+        Returns: {
+          event_id: string
+          ticker: string
+          event_type: string
+          event_date: string | null
+          event_date_only: boolean
+          event_label: string
+          received_at: string | null
+          source_filed_at: string | null
+          message: string
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never

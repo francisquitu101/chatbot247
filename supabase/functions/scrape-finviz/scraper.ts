@@ -190,6 +190,7 @@ function parseDateContext(rawDate: string): { year: number; month: number; day: 
   const day = Number(dayText)
   const yearShort = Number(yearText)
   const year = yearShort >= 50 ? 1900 + yearShort : 2000 + yearShort
+  if (!Number.isInteger(monthIndex)) return null
   const daysInMonth = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate()
   if (monthIndex < 0 || day < 1 || day > daysInMonth) return null
   return { year, month: monthIndex + 1, day, value: `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}` }
@@ -212,16 +213,26 @@ function toIsoInFinvizTimeZone(dateContext: string, hour: number, minute: number
   return new Date(wallClockUtc - offsetMinutes * 60_000).toISOString()
 }
 
-export function parseFinvizTimestamp(rawValue: string | null, currentNewsDate: string | null): { published_at: string | null; rawTimestamp: string | null; currentNewsDate: string | null } {
+export function parseFinvizTimestamp(rawValue: string | null, currentNewsDate: string | null): { published_at: string | null; rawTimestamp: string | null; currentNewsDate: string | null; sourceDate: string | null } {
   const normalized = normalizeText(rawValue)
-  if (!normalized) return { published_at: null, rawTimestamp: null, currentNewsDate }
+  if (!normalized) return { published_at: null, rawTimestamp: null, currentNewsDate, sourceDate: null }
+  const dateOnlyMatch = normalized.match(/^([A-Za-z]{3}-\d{2}-\d{2})$/i)
+  if (dateOnlyMatch) {
+    const dateContext = parseDateContext(dateOnlyMatch[1])
+    return {
+      published_at: null,
+      rawTimestamp: normalized,
+      currentNewsDate: dateContext?.value ?? currentNewsDate,
+      sourceDate: dateContext?.value ?? null,
+    }
+  }
   const dateTimeMatch = normalized.match(/^([A-Za-z]{3}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})(AM|PM)$/i)
   if (dateTimeMatch) {
     const [, dateText, hoursText, minutesText, meridiem] = dateTimeMatch
     const dateContext = parseDateContext(dateText)
     const hours = Number(hoursText) % 12 + (meridiem.toUpperCase() === 'PM' ? 12 : 0)
     const minutes = Number(minutesText)
-    return { published_at: dateContext ? toIsoInFinvizTimeZone(dateContext.value, hours, minutes) : null, rawTimestamp: normalized, currentNewsDate: dateContext?.value ?? currentNewsDate }
+    return { published_at: dateContext ? toIsoInFinvizTimeZone(dateContext.value, hours, minutes) : null, rawTimestamp: normalized, currentNewsDate: dateContext?.value ?? currentNewsDate, sourceDate: null }
   }
   const todayTimeMatch = normalized.match(/^Today\s+(\d{1,2}):(\d{2})(AM|PM)$/i)
   const timeOnlyMatch = normalized.match(/^(\d{1,2}):(\d{2})(AM|PM)$/i)
@@ -229,12 +240,12 @@ export function parseFinvizTimestamp(rawValue: string | null, currentNewsDate: s
   if (timeMatch) {
     const [, hoursText, minutesText, meridiem] = timeMatch
     const nextDate = todayTimeMatch ? currentNewsDate ?? getFinvizToday() : currentNewsDate
-    if (!nextDate) return { published_at: null, rawTimestamp: normalized, currentNewsDate: null }
+    if (!nextDate) return { published_at: null, rawTimestamp: normalized, currentNewsDate: null, sourceDate: null }
     const hours = Number(hoursText) % 12 + (meridiem.toUpperCase() === 'PM' ? 12 : 0)
     const minutes = Number(minutesText)
-    return { published_at: toIsoInFinvizTimeZone(nextDate, hours, minutes), rawTimestamp: normalized, currentNewsDate: nextDate }
+    return { published_at: toIsoInFinvizTimeZone(nextDate, hours, minutes), rawTimestamp: normalized, currentNewsDate: nextDate, sourceDate: null }
   }
-  return { published_at: null, rawTimestamp: normalized, currentNewsDate }
+  return { published_at: null, rawTimestamp: normalized, currentNewsDate, sourceDate: null }
 }
 
 function extractNewsRows(tableHtml: string): string[] {
@@ -605,6 +616,7 @@ function extractNews(document: { html?: string | null; markdown?: string | null 
     const firstCellText = normalizeText(decodeHtmlEntities((cells[0] ?? '').replace(/<[^>]+>/g, ' ')))
     const secondCellText = normalizeText(decodeHtmlEntities((cells[1] ?? '').replace(/<[^>]+>/g, ' ')))
     const timestampInFirstCell = Boolean(firstCellText && (/^[A-Za-z]{3}-\d{2}-\d{2}\s+\d{1,2}:\d{2}(?:AM|PM)$/i.test(firstCellText) || /^(?:Today\s+)?\d{1,2}:\d{2}(?:AM|PM)$/i.test(firstCellText)))
+    const dateOnlyInFirstCell = !timestampInFirstCell && Boolean(firstCellText && /^[A-Za-z]{3}-\d{2}-\d{2}$/i.test(firstCellText))
     const timestampInFirstTwoCells = !timestampInFirstCell && Boolean(
       firstCellText && secondCellText && /^[A-Za-z]{3}-\d{2}-\d{2}$/i.test(firstCellText) && /^\d{1,2}:\d{2}(?:AM|PM)$/i.test(secondCellText),
     )
@@ -612,14 +624,16 @@ function extractNews(document: { html?: string | null; markdown?: string | null 
       ? firstCellText
       : timestampInFirstTwoCells
         ? `${firstCellText} ${secondCellText}`
-        : null
-    const timestampCellCount = timestampInFirstTwoCells ? 2 : timestampInFirstCell ? 1 : 0
+        : dateOnlyInFirstCell
+          ? firstCellText
+          : null
+    const timestampCellCount = timestampInFirstTwoCells ? 2 : timestampInFirstCell || dateOnlyInFirstCell ? 1 : 0
     const parsedTimestamp = parseFinvizTimestamp(timestamp, currentNewsDate)
     const articleCells = cells.slice(timestampCellCount)
     const providerCell = cells.length > 2 ? cells.at(-1) ?? '' : ''
     const candidateLinks = articleCells.flatMap(extractLinksFromCell)
     currentNewsDate = parsedTimestamp.currentNewsDate ?? currentNewsDate
-    const { published_at, rawTimestamp } = parsedTimestamp
+    const { published_at, rawTimestamp, sourceDate } = parsedTimestamp
 
     for (const articleLink of candidateLinks) {
       const title = articleLink.text
@@ -656,6 +670,7 @@ function extractNews(document: { html?: string | null; markdown?: string | null 
           extractor: 'finviz-news-table',
           provider: provider ?? null,
           raw_timestamp: rawTimestamp ?? timestamp ?? null,
+          source_event_date: sourceDate,
           display_timezone: FINVIZ_TIME_ZONE,
         },
       })

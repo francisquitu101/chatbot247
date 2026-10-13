@@ -503,16 +503,29 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
 }
 
 .luna-terminal-preview-label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
   margin-bottom: 24px;
   color: #84918a;
   font-size: 9px;
+  line-height: 1.5;
   letter-spacing: 0.12em;
 }
+
+.luna-terminal-preview-label span { letter-spacing: 0.02em; }
+.luna-terminal-preview-label strong { color: #a9b8af; }
+.luna-terminal-preview-label.tracker-connected strong { color: #8ed2a2; }
+.luna-terminal-preview-label.tracker-polling strong { color: #e8c878; }
+.luna-terminal-preview-label.tracker-degraded strong,
+.luna-terminal-preview-label.tracker-error strong,
+.luna-terminal-preview-label .tracker-error-detail { color: #ef938a; }
 
 .luna-terminal-content p { margin: 0 0 10px; }
 .luna-terminal-content p > span { color: var(--brand-peach); }
 .luna-terminal-content b { color: var(--brand-peach); font-weight: 700; }
 .luna-terminal-system { color: #94b59f; }
+.luna-terminal-content p { overflow-wrap: anywhere; }
 
 .luna-terminal-cursor {
   width: 7px;

@@ -1,5 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FinvizAnalystRating, FinvizInsiderTrade, ScrapedItem, TrackedStock } from '../../types'
+import { normalizeTerminalActivityRows, type TerminalActivityEvent } from '../terminalActivity'
+
+export type { TerminalActivityEvent } from '../terminalActivity'
 
 const itemSelect = 'id, source_id, ticker, title, content, author, url, published_at, scraped_at, content_hash, metadata, created_at, item_type'
 
@@ -12,12 +15,6 @@ export type CompanyData = {
 
 export type FinvizNewsItem = Pick<ScrapedItem, 'id' | 'ticker' | 'title' | 'author' | 'url' | 'published_at' | 'scraped_at' | 'metadata' | 'item_type'>
 export type FinvizCompanyActivity = Pick<CompanyData, 'ratings' | 'insiderTrades'>
-
-export type TerminalActivityEvent = {
-  id: string
-  timestamp: string
-  message: string
-}
 
 export type TerminalActivityResult = {
   events: TerminalActivityEvent[]
@@ -133,107 +130,16 @@ export async function getFinvizCompanyNews(client: SupabaseClient, ticker: strin
 export async function getLatestTerminalActivity(
   client: SupabaseClient,
   ticker: string,
-  analystId: string,
+  since: string | null = null,
 ): Promise<TerminalActivityResult> {
-  const [insiderResult, newsResult, filingResult, ratingResult] = await Promise.allSettled([
-    client.from('finviz_insider_trades')
-      .select('id, insider_name, transaction, transaction_date, scraped_at')
-      .eq('ticker', ticker.toUpperCase())
-      .order('transaction_date', { ascending: false, nullsFirst: false })
-      .limit(1)
-      .maybeSingle(),
-    getFinvizCompanyNews(client, ticker),
-    client.from('analyst_evidence')
-      .select('evidence_items!inner(id, title, published_at, source_type)')
-      .eq('analyst_id', analystId)
-      .eq('evidence_items.source_type', 'SEC')
-      .order('published_at', { referencedTable: 'evidence_items', ascending: false, nullsFirst: false })
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-    client.from('finviz_analyst_ratings')
-      .select('id, analyst, action, rating_change, price_target_change, rating_date')
-      .eq('ticker', ticker.toUpperCase())
-      .order('rating_date', { ascending: false, nullsFirst: false })
-      .limit(1)
-      .maybeSingle(),
-  ])
-
-  const events: TerminalActivityEvent[] = []
-  const errors: string[] = []
-
-  if (insiderResult.status === 'fulfilled' && !insiderResult.value.error) {
-    const trade = insiderResult.value.data
-    if (trade) {
-      events.push({
-        id: `insider-${trade.id}`,
-        timestamp: trade.transaction_date || trade.scraped_at,
-        message: `🚨 Insider action: ${trade.transaction || 'Trade'} by ${trade.insider_name || 'unknown insider'}`,
-      })
-    }
-  } else {
-    const message = insiderResult.status === 'rejected'
-      ? getQueryErrorMessage(insiderResult.reason)
-      : getQueryErrorMessage(insiderResult.value.error)
-    errors.push(`Insider feed: ${message}`)
+  const normalizedTicker = ticker.trim().toUpperCase()
+  try {
+    const { data, error } = await client.rpc('get_public_terminal_activity', { p_ticker: normalizedTicker, p_since: since })
+    if (error) return { events: [], errors: [`Terminal activity: ${getQueryErrorMessage(error)}`] }
+    return { events: normalizeTerminalActivityRows(normalizedTicker, data), errors: [] }
+  } catch (error) {
+    return { events: [], errors: [`Terminal activity: ${getQueryErrorMessage(error)}`] }
   }
-
-  if (newsResult.status === 'fulfilled') {
-    const latestNews = newsResult.value.reduce<FinvizNewsItem | null>((latest, item) => {
-      if (!latest) return item
-      const itemTimestamp = new Date(item.published_at ?? item.scraped_at).getTime()
-      const latestTimestamp = new Date(latest.published_at ?? latest.scraped_at).getTime()
-      return itemTimestamp > latestTimestamp ? item : latest
-    }, null)
-    if (latestNews) {
-      const headline = latestNews.title?.trim()
-      events.push({
-        id: `news-${latestNews.id}`,
-        timestamp: latestNews.published_at ?? latestNews.scraped_at,
-        message: `📰 Market article${headline ? `: ${headline}` : ''}`,
-      })
-    }
-  } else {
-    errors.push(`Market news: ${getQueryErrorMessage(newsResult.reason)}`)
-  }
-
-  if (filingResult.status === 'fulfilled' && !filingResult.value.error) {
-    const relation = filingResult.value.data?.evidence_items
-    const filing = Array.isArray(relation) ? relation[0] : relation
-    if (filing?.published_at) {
-      events.push({
-        id: `filing-${filing.id}`,
-        timestamp: filing.published_at,
-        message: `📄 SEC filing published${filing.title ? `: ${filing.title}` : ''}`,
-      })
-    }
-  } else {
-    const message = filingResult.status === 'rejected'
-      ? getQueryErrorMessage(filingResult.reason)
-      : getQueryErrorMessage(filingResult.value.error)
-    errors.push(`SEC filings: ${message}`)
-  }
-
-  if (ratingResult.status === 'fulfilled' && !ratingResult.value.error) {
-    const rating = ratingResult.value.data
-    if (rating) {
-      const details = [rating.action, rating.rating_change, rating.price_target_change]
-        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-      events.push({
-        id: `rating-${rating.id}`,
-        timestamp: rating.rating_date,
-        message: `📊 Analyst update${rating.analyst ? ` from ${rating.analyst}` : ''}${details.length > 0 ? `: ${details.join(' · ')}` : ''}`,
-      })
-    }
-  } else {
-    const message = ratingResult.status === 'rejected'
-      ? getQueryErrorMessage(ratingResult.reason)
-      : getQueryErrorMessage(ratingResult.value.error)
-    errors.push(`Analyst ratings: ${message}`)
-  }
-
-  events.sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime())
-  return { events, errors }
 }
 
 function getQueryErrorMessage(error: unknown): string {
@@ -244,7 +150,10 @@ function getQueryErrorMessage(error: unknown): string {
       .filter((value): value is string => typeof value === 'string')
       .join(' ')
       .toLowerCase()
-    if (code === '42883' || code === 'PGRST202' || text.includes('get_public_finviz_news')) {
+    if (text.includes('get_public_terminal_activity') || code === '42883' || code === 'PGRST202') {
+      return 'Apply Supabase migration 20261013132133_fix_terminal_activity_tracker.sql to enable the ticker activity tracker.'
+    }
+    if (text.includes('get_public_finviz_news')) {
       return 'Apply Supabase migration 20261009160000_cache_news_briefs_and_multisource_terminal.sql.'
     }
   }
