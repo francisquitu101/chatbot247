@@ -185,6 +185,11 @@ export function TechnicalCopilotPanel({ ticker, candles, authenticated }: Techni
         </section>
       )}
       <p className="technical-copilot-disclaimer">Quantitative context only. Not investment advice.</p>
+      <img
+        className="mascot-overlay"
+        src="https://i.postimg.cc/VNjWnrk9/Topo-de-marketing-con-laptop.png"
+        alt="MarketMole mascot with a laptop"
+      />
     </aside>
   )
 }
