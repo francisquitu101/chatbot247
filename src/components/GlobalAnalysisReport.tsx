@@ -55,6 +55,20 @@ function formatReportTimestamp(value: string | null) {
   return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeZone: 'UTC' }).format(date)
 }
 
+function formatHistoryTimestamp(value: string | null) {
+  if (!value) return 'Date unavailable'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Date unavailable'
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+    timeZone: 'UTC',
+  }).format(date)
+}
+
 function getExternalUrl(value: string | null) {
   if (!value) return null
   try {
@@ -87,29 +101,30 @@ export function GlobalAnalysisReport({ report, history, onSelectHistory }: Globa
 
   return (
     <>
-      <section className="global-analysis-history" aria-label={`${report.ticker} report history`}>
-        <div className="global-analysis-history-heading">
-          <h3>Report History</h3>
-          <span>{history.length} {history.length === 1 ? 'saved report' : 'saved reports'}</span>
-        </div>
+      <nav className="global-analysis-history" aria-label={`${report.ticker} report history`}>
+        <span className="global-analysis-history-label">Report history</span>
         {history.length > 0 ? (
           <ol>
             {history.map((entry, index) => (
               <li key={entry.id}>
                 <button
                   type="button"
-                  className={entry.id === report.id ? 'selected' : ''}
+                  className={`global-analysis-history-option${entry.id === report.id ? ' selected' : ''}`}
                   onClick={() => onSelectHistory(entry)}
                   aria-current={entry.id === report.id ? 'page' : undefined}
+                  aria-label={`${formatHistoryTimestamp(entry.generated_at)}, ${entry.analysis.sentiment}${index === 0 ? ', latest report' : ''}`}
                 >
-                  <span>{formatReportTimestamp(entry.generated_at)}{index === 0 ? ' · Latest' : ''}</span>
-                  <span>{entry.analysis.sentiment}</span>
+                  <span className="global-analysis-history-date">{formatHistoryTimestamp(entry.generated_at)}</span>
+                  {index === 0 && <span className="global-analysis-history-latest">Latest</span>}
+                  <span className={`global-analysis-history-sentiment sentiment-${entry.analysis.sentiment.toLowerCase()}`}>
+                    {entry.analysis.sentiment}
+                  </span>
                 </button>
               </li>
             ))}
           </ol>
-        ) : <p>No saved reports yet.</p>}
-      </section>
+        ) : <span className="global-analysis-history-empty">No saved reports</span>}
+      </nav>
       <article className="institutional-report" aria-label={`${report.ticker} due diligence report`}>
       <div className="institutional-report-actions">
         <button type="button" className="global-analysis-export-button" onClick={() => window.print()}>
