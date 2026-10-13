@@ -473,6 +473,15 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   flex: 0 1 600px;
 }
 
+.luna-desktop-windows.luna-chart-focused .luna-analysis-window {
+  width: 100%;
+  flex: 1 1 100%;
+}
+
+.luna-desktop-windows.luna-chart-focused .luna-terminal-window {
+  display: none;
+}
+
 .luna-terminal-window {
   width: min(360px, 36%);
   flex: 0 1 360px;
@@ -875,10 +884,42 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
 }
 
 .luna-price-chart-canvas {
+  position: relative;
   flex: 1 1 auto;
   width: 100%;
   height: auto;
   min-height: 0;
+}
+
+.luna-chart-marker-tooltip {
+  position: absolute;
+  z-index: 5;
+  display: grid;
+  gap: 5px;
+  width: min(280px, calc(100% - 16px));
+  max-height: 160px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 9px 11px;
+  border: 1px solid rgba(19, 33, 39, 0.12);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 8px 24px rgba(19, 33, 39, 0.14);
+  color: #35433e;
+  font-size: 10px;
+  line-height: 1.4;
+  pointer-events: none;
+}
+
+.luna-chart-marker-tooltip > strong {
+  color: #17251f;
+  font-size: 10px;
+}
+
+.luna-chart-marker-tooltip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .luna-chart-state {
@@ -1509,11 +1550,188 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   overflow: hidden;
 }
 
-.luna-chart-view .luna-price-chart {
+.luna-chart-workspace {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 2rem;
   width: 100%;
-  padding: 18px;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px;
+}
+
+.luna-chart-view .luna-price-chart {
+  flex: 3 1 0;
+  width: auto;
+  min-width: 0;
+  padding: 12px;
   border: 0;
   background: transparent;
+}
+
+.technical-copilot-panel {
+  display: flex;
+  flex: 0 1 22%;
+  flex-direction: column;
+  gap: 13px;
+  width: 22%;
+  min-width: 0;
+  max-width: 320px;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 17px;
+  border: 1px solid #e3e9e5;
+  border-radius: 9px;
+  background: linear-gradient(160deg, #fff, #f8faf8);
+  box-shadow: 0 3px 12px rgba(35, 55, 44, 0.045);
+}
+
+.technical-copilot-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.technical-copilot-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  place-items: center;
+  border: 1px solid #dbe8e0;
+  border-radius: 8px;
+  background: #f1f7f3;
+  color: #24734e;
+}
+
+.technical-copilot-heading > div > span {
+  color: #85918a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.technical-copilot-heading h2 {
+  margin: 3px 0 0;
+  color: #26352e;
+  font-size: 13px;
+  letter-spacing: -0.02em;
+}
+
+.technical-copilot-description,
+.technical-copilot-result > p {
+  margin: 0;
+  color: #68766f;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.technical-copilot-coverage {
+  display: grid;
+  gap: 4px;
+  padding: 9px 0;
+  border-top: 1px solid #e9eeeb;
+  border-bottom: 1px solid #e9eeeb;
+  color: #64736b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 8px;
+}
+
+.technical-copilot-coverage span:first-child {
+  color: #36453e;
+  font-weight: 700;
+}
+
+.technical-copilot-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 8px 10px;
+  border: 1px solid #246c4c;
+  border-radius: 6px;
+  background: #246c4c;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.technical-copilot-button:disabled {
+  border-color: #cbd5cf;
+  background: #dbe2dd;
+  color: #7d8982;
+  cursor: not-allowed;
+}
+
+.technical-copilot-hint,
+.technical-copilot-status,
+.technical-copilot-error,
+.technical-copilot-disclaimer {
+  margin: 0;
+  color: #758179;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.technical-copilot-error {
+  padding: 8px;
+  border: 1px solid #f0cfca;
+  border-radius: 5px;
+  background: #fff7f5;
+  color: #a03f35;
+}
+
+.technical-copilot-result {
+  display: grid;
+  gap: 10px;
+  padding: 11px;
+  border: 1px solid #dce8e0;
+  border-radius: 7px;
+  background: #f5f9f6;
+}
+
+.technical-copilot-result-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.technical-copilot-result-heading h3 {
+  margin: 0;
+  color: #34443b;
+  font-size: 10px;
+}
+
+.technical-copilot-result-heading button {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  border: 1px solid #d9e3dc;
+  border-radius: 5px;
+  background: #fff;
+  color: #66756c;
+  cursor: pointer;
+}
+
+.technical-copilot-command-count {
+  color: #568064;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 8px;
+}
+
+.technical-copilot-disclaimer {
+  margin-top: auto;
+  color: #8a958e;
+}
+
+.technical-copilot-panel .spinning {
+  animation: luna-spin 1s linear infinite;
 }
 
 .luna-sec-explorer {
@@ -2544,6 +2762,27 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
 }
 
 @media (max-width: 620px) {
+  .luna-chart-view {
+    overflow-y: auto;
+  }
+
+  .luna-chart-workspace {
+    flex-direction: column;
+  }
+
+  .luna-chart-view .luna-price-chart {
+    flex: 0 0 52vh;
+    min-height: 300px;
+  }
+
+  .technical-copilot-panel {
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    overflow: visible;
+  }
+
   .luna-chat-shell {
     height: 100dvh;
     min-height: 100dvh;

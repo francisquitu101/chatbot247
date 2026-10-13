@@ -2,11 +2,13 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { ArrowRight, Brain, ChartColumnIncreasing, Chrome, Crown, ExternalLink, FileText, FolderOpen, LogOut, Newspaper, Plus, RefreshCw, Star, TrendingUp } from 'lucide-react'
 import { Navbar } from '../components/Navbar'
-import { PriceChart } from '../components/PriceChart'
+import { PriceChart, type PriceChartCandle } from '../components/PriceChart'
+import { TechnicalCopilotPanel } from '../components/TechnicalCopilotPanel'
 import { GlobalAnalysisReport, type GlobalTickerAnalysis } from '../components/GlobalAnalysisReport'
 import { getPrivateAnalystByTicker, getPublicAnalystByTicker } from '../lib/analystData'
-import { getFinvizCompanyInsiderTrades, getFinvizCompanyNews, getFinvizCompanyRatings, getLatestTerminalActivity, getSecCompanyFilings, type TerminalActivityEvent } from '../lib/queries/company'
+import { getFinvizCompanyInsiderTrades, getFinvizCompanyNews, getFinvizCompanyRatings, getLatestTerminalActivity, getSecCompanyFilings, type FinvizNewsItem, type TerminalActivityEvent } from '../lib/queries/company'
 import { getAuthRedirectUrl, getUserWatchlist, supabase, updateWatchlist } from '../lib/supabase'
+import type { FinvizAnalystRating, FinvizInsiderTrade } from '../types'
 
 const DEMO_PATTERNS = [/\[DEMO SEEDED\]/i, /demo_seed/i, /synthetic_test/i, /demo seed/i, /synthetic/i, /development test/i]
 
@@ -193,6 +195,27 @@ function isGlobalTickerAnalysis(value: unknown): value is GlobalTickerAnalysis {
   )
 }
 
+function removeLegacyChartCommands(report: GlobalTickerAnalysis): GlobalTickerAnalysis {
+  const strip = (value: string) => value.replace(/<chart_command>[\s\S]*?<\/chart_command>/gi, '').trim()
+  const analysis = report.analysis
+  return {
+    ...report,
+    analysis: {
+      ...analysis,
+      executive_summary: strip(analysis.executive_summary),
+      key_findings: analysis.key_findings.map(strip),
+      sec_filings_analysis: strip(analysis.sec_filings_analysis),
+      risk_assessment: analysis.risk_assessment.map((risk) => ({
+        ...risk,
+        risk: strip(risk.risk),
+        details: strip(risk.details),
+      })),
+      catalysts: analysis.catalysts.map(strip),
+      conclusion: strip(analysis.conclusion),
+    },
+  }
+}
+
 async function getFunctionErrorMessage(error: unknown): Promise<string> {
   if (error && typeof error === 'object' && 'context' in error) {
     const context = error.context
@@ -281,6 +304,7 @@ export function AnalystExperienceDisplay({
   const globalAnalysisTicker = globalAnalysis?.ticker
   const globalAnalysisGeneratedAt = globalAnalysis?.generated_at
   const globalAnalysisRestoreSequenceRef = useRef(0)
+  const [chartHistory, setChartHistory] = useState<{ ticker: string; candles: PriceChartCandle[] }>({ ticker: '', candles: [] })
   const [activeApp, setActiveApp] = useState<AnalystApp>('sec')
   const [briefingArticleId, setBriefingArticleId] = useState<string | null>(null)
   const [newsBriefings, setNewsBriefings] = useState<Record<string, NewsBriefing>>({})
@@ -814,7 +838,7 @@ export function AnalystExperienceDisplay({
       if ('unchanged' in response.data && response.data.unchanged) {
         setGlobalAnalysisHasUpdates(false)
       } else if ('analysis' in response.data) {
-        setGlobalAnalysis(response.data)
+        setGlobalAnalysis(removeLegacyChartCommands(response.data))
         setGlobalAnalysisHasUpdates(null)
       } else {
         throw new Error('The global analysis endpoint returned an invalid analysis.')
@@ -857,7 +881,7 @@ export function AnalystExperienceDisplay({
           if (!isGlobalTickerAnalysis(savedReport)) {
             throw new Error('The saved analysis report has an invalid data format.')
           }
-          setGlobalAnalysis(savedReport)
+          setGlobalAnalysis(removeLegacyChartCommands(savedReport))
           setGlobalAnalysisHasUpdates(null)
         }
       } catch (restoreError) {
@@ -1099,9 +1123,26 @@ export function AnalystExperienceDisplay({
     }))),
     ...evidenceList.filter((item) => item.source_type?.toUpperCase() === 'SEC'),
   ].filter((file, index, files) => files.findIndex((candidate) => candidate.id === file.id) === index)
-  const currentRatings = loadedTicker === activeTicker ? finvizRatings : []
-  const currentInsiderTrades = loadedTicker === activeTicker ? finvizInsiderTrades : []
-  const currentNews = loadedTicker === activeTicker ? finvizNews : []
+  const currentRatings: FinvizAnalystRating[] = loadedTicker === activeTicker ? finvizRatings : []
+  const currentInsiderTrades: FinvizInsiderTrade[] = loadedTicker === activeTicker ? finvizInsiderTrades : []
+  const currentNews: FinvizNewsItem[] = loadedTicker === activeTicker ? finvizNews : []
+  const handleChartCandlesChange = useCallback((candles: PriceChartCandle[]) => {
+    setChartHistory({ ticker: activeTicker, candles })
+  }, [activeTicker])
+  const currentChartCandles = chartHistory.ticker === activeTicker ? chartHistory.candles : []
+  const chartWorkspace = (
+    <div className="luna-chart-workspace">
+      <PriceChart
+        key={activeTicker}
+        ticker={activeTicker}
+        insiderTrades={currentInsiderTrades}
+        ratings={currentRatings}
+        news={currentNews}
+        onCandlesChange={handleChartCandlesChange}
+      />
+      <TechnicalCopilotPanel key={activeTicker} ticker={activeTicker} candles={currentChartCandles} authenticated={Boolean(session)} />
+    </div>
+  )
   const activeTitle = {
     chart: 'Price Chart',
     sec: 'SEC Filings',
@@ -1240,7 +1281,7 @@ export function AnalystExperienceDisplay({
             </button>
           ))}
         </div>
-        <div className="luna-desktop-windows">
+        <div className={`luna-desktop-windows ${activeApp === 'chart' ? 'luna-chart-focused' : ''}`}>
           <section className="luna-window luna-analysis-window" aria-label={`${activeTitle} · ${activeTicker}`}>
             <div className="luna-titlebar">
               <div className="luna-window-controls" aria-hidden="true">
@@ -1253,7 +1294,7 @@ export function AnalystExperienceDisplay({
             </div>
             {activeApp === 'chart' ? (
               <main className="luna-data-view luna-chart-view" aria-label={`${activeTicker} price chart`}>
-                <PriceChart ticker={activeTicker} />
+                {chartWorkspace}
               </main>
             ) : (
               <main className="luna-data-view luna-sec-explorer">
@@ -1290,7 +1331,7 @@ export function AnalystExperienceDisplay({
         ))}
       </div>
 
-      <div className="luna-desktop-windows">
+      <div className={`luna-desktop-windows ${activeApp === 'chart' ? 'luna-chart-focused' : ''}`}>
       <div className="luna-window luna-analysis-window">
         <div className="luna-titlebar" aria-label="MarketMole application window">
           <div className="luna-window-controls" aria-hidden="true">
@@ -1358,7 +1399,7 @@ export function AnalystExperienceDisplay({
 
         {activeApp === 'chart' && (
           <main className="luna-data-view luna-chart-view" aria-label={`${activeTicker} price chart`}>
-            <PriceChart ticker={activeTicker} />
+            {chartWorkspace}
           </main>
         )}
 

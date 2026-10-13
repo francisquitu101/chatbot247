@@ -81,7 +81,8 @@ Evidence and accuracy rules:
 - Cite factual statements in narrative sections using only the plain numeric bibliography references provided, formatted exactly as [1], [2]. Never use source-type prefixes, invent references, or add references to financial_metrics.
 - Write facts and interpretation in a confident, professional house voice. State material limitations as analytical scope (for example, "The assessment focuses on disclosed insider activity") rather than as process complaints.
 - Keep risk severity proportional to the records and do not infer safety or risk from absent data. Never fill gaps with general market knowledge.
-- Write concise institutional prose and avoid generic quadrant summaries or unsupported investment recommendations.`
+- Write concise institutional prose and avoid generic quadrant summaries or unsupported investment recommendations.
+`
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
