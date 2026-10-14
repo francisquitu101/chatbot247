@@ -50,7 +50,7 @@ function analystRating(action: string, ratingChange: string, targetChange: strin
 }
 
 describe('buildChartMarkers', () => {
-  it('keeps separate sale events and maps them to their matching candle date', () => {
+  it('keeps the completed sale instead of its matching proposed sale', () => {
     const result = buildChartMarkers(
       [candle('2026-09-28')],
       [insiderTrade('Proposed Sale'), insiderTrade('Sale')],
@@ -60,7 +60,6 @@ describe('buildChartMarkers', () => {
     expect(result.markers).toHaveLength(1)
     expect(result.markers[0].time).toBe(candle('2026-09-28').time)
     expect(result.eventsByTime.get(Number(result.markers[0].time))).toEqual([
-      expect.objectContaining({ detail: 'Proposed Sale · #Shares: 1,000 · Value: $10,000' }),
       expect.objectContaining({ detail: 'Sale · #Shares: 1,000 · Value: $10,000' }),
     ])
   })

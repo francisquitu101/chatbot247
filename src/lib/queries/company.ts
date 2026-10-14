@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FinvizAnalystRating, FinvizInsiderTrade, ScrapedItem, TrackedStock } from '../../types'
+import { deduplicateSupersededProposedSales } from '../insiderTrades'
 import { normalizeTerminalActivityRows, type TerminalActivityEvent } from '../terminalActivity'
 
 export type { TerminalActivityEvent } from '../terminalActivity'
@@ -80,7 +81,7 @@ export async function getCompanyData(client: SupabaseClient, ticker: string): Pr
     stock: (stockResult.data ?? null) as TrackedStock | null,
     items: (itemsResult.data ?? []) as ScrapedItem[],
     ratings: (ratingsResult.data ?? []) as FinvizAnalystRating[],
-    insiderTrades: (insiderResult.data ?? []) as FinvizInsiderTrade[],
+    insiderTrades: deduplicateSupersededProposedSales((insiderResult.data ?? []) as FinvizInsiderTrade[]),
   }
 }
 
@@ -111,7 +112,7 @@ export async function getFinvizCompanyInsiderTrades(client: SupabaseClient, tick
     .order('transaction_date', { ascending: false })
 
   if (error) throw error
-  return (data ?? []) as FinvizInsiderTrade[]
+  return deduplicateSupersededProposedSales((data ?? []) as FinvizInsiderTrade[])
 }
 
 export async function getFinvizCompanyNews(client: SupabaseClient, ticker: string): Promise<FinvizNewsItem[]> {

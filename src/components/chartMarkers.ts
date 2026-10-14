@@ -1,4 +1,5 @@
 import type { CandlestickData, SeriesMarker, SeriesMarkerBar, UTCTimestamp } from 'lightweight-charts'
+import { deduplicateSupersededProposedSales } from '../lib/insiderTrades'
 import type { FinvizAnalystRating, FinvizInsiderTrade } from '../types'
 
 export type ChartMarkerEvent = {
@@ -55,7 +56,7 @@ export function buildChartMarkers(
     eventsByDate.set(dateKey, events)
   }
 
-  for (const trade of insiderTrades) {
+  for (const trade of deduplicateSupersededProposedSales(insiderTrades)) {
     const transaction = trade.transaction.trim() || 'Transaction'
     const insiderTransaction = /sale/i.test(transaction)
       ? 'sale'
