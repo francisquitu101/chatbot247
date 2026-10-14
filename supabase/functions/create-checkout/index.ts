@@ -40,15 +40,23 @@ type PayPalPlan = {
 };
 
 function isMonthlyProPlan(plan: PayPalPlan): boolean {
+  const billingCycle = plan.billing_cycles?.[0];
+  const priceValue = billingCycle?.pricing_scheme?.fixed_price?.value;
+  const price = typeof priceValue === "number"
+    ? priceValue
+    : typeof priceValue === "string" && /^\d+(?:\.\d{1,2})?$/.test(priceValue)
+    ? Number(priceValue)
+    : Number.NaN;
+
   return plan.status === "ACTIVE" &&
     plan.billing_cycles?.length === 1 &&
-    plan.billing_cycles[0].tenure_type === "REGULAR" &&
-    plan.billing_cycles[0].total_cycles === 0 &&
-    plan.billing_cycles[0].frequency?.interval_unit === "MONTH" &&
-    plan.billing_cycles[0].frequency?.interval_count === 1 &&
-    plan.billing_cycles[0].pricing_scheme?.fixed_price?.currency_code ===
-      "USD" &&
-    plan.billing_cycles[0].pricing_scheme?.fixed_price?.value === "6.90";
+    billingCycle?.tenure_type === "REGULAR" &&
+    billingCycle.total_cycles === 0 &&
+    billingCycle.frequency?.interval_unit === "MONTH" &&
+    billingCycle.frequency?.interval_count === 1 &&
+    billingCycle.pricing_scheme?.fixed_price?.currency_code === "USD" &&
+    Number.isFinite(price) &&
+    price === 6.9;
 }
 
 Deno.serve(async (request) => {
