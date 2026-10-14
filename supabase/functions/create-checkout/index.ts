@@ -18,6 +18,8 @@ const PAYPAL_TIMEOUT_MS = 15_000;
 type PayPalSubscription = {
   id?: unknown;
   status?: unknown;
+  plan_id?: unknown;
+  custom_id?: unknown;
   links?: Array<{ href?: unknown; rel?: unknown }>;
 };
 
@@ -59,6 +61,27 @@ function isMonthlyProPlan(plan: PayPalPlan): boolean {
     price === 6.9;
 }
 
+function getApprovalUrl(subscription: PayPalSubscription): string | null {
+  const approvalUrl = subscription.links?.find((link) =>
+    link.rel === "approve"
+  )?.href;
+  if (typeof approvalUrl !== "string") return null;
+
+  try {
+    const parsedUrl = new URL(approvalUrl);
+    const hostname = parsedUrl.hostname.toLowerCase();
+    if (
+      parsedUrl.protocol === "https:" &&
+      (hostname === "paypal.com" || hostname.endsWith(".paypal.com"))
+    ) {
+      return approvalUrl;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 Deno.serve(async (request) => {
   const options = handleOptions(request);
   if (options) return options;
@@ -95,7 +118,7 @@ Deno.serve(async (request) => {
     const client = createBackendClient("service_role");
     const { data: existingSubscription, error: existingError } = await client
       .from("pro_subscriptions")
-      .select("id")
+      .select("paypal_subscription_id, paypal_plan_id, status")
       .eq("user_id", user.id)
       .in("status", ["approval_pending", "active", "suspended"])
       .limit(1)
@@ -113,9 +136,95 @@ Deno.serve(async (request) => {
       );
     }
     if (existingSubscription) {
+      if (existingSubscription.status === "approval_pending") {
+        const accessToken = await getPayPalAccessToken();
+        const controller = new AbortController();
+        const timeout = setTimeout(
+          () => controller.abort(),
+          PAYPAL_TIMEOUT_MS,
+        );
+        let subscriptionResponse: Response;
+        try {
+          subscriptionResponse = await fetch(
+            `${apiUrl}/v1/billing/subscriptions/${
+              encodeURIComponent(existingSubscription.paypal_subscription_id)
+            }`,
+            {
+              headers: { Authorization: "Bearer " + accessToken },
+              signal: controller.signal,
+            },
+          );
+        } catch (error) {
+          const code = error instanceof DOMException &&
+              error.name === "AbortError"
+            ? "PAYPAL_TIMEOUT"
+            : error instanceof Error
+            ? error.message
+            : "PAYPAL_UNAVAILABLE";
+          console.error(JSON.stringify({
+            event: "paypal_pending_subscription_lookup_failed",
+            code,
+          }));
+          return errorResponse(
+            "CHECKOUT_PROVIDER_ERROR",
+            "Unable to resume your pending PayPal approval. Please try again.",
+            502,
+            request,
+          );
+        } finally {
+          clearTimeout(timeout);
+        }
+
+        if (!subscriptionResponse.ok) {
+          console.error(JSON.stringify({
+            event: "paypal_pending_subscription_lookup_failed",
+            status: subscriptionResponse.status,
+          }));
+          return errorResponse(
+            "CHECKOUT_PROVIDER_ERROR",
+            "Unable to resume your pending PayPal approval. Please try again.",
+            502,
+            request,
+          );
+        }
+
+        const subscription = await subscriptionResponse.json() as PayPalSubscription;
+        if (
+          subscription.custom_id !== user.id ||
+          subscription.plan_id !== existingSubscription.paypal_plan_id ||
+          subscription.plan_id !== planId
+        ) {
+          console.error(JSON.stringify({
+            event: "paypal_pending_subscription_ownership_mismatch",
+          }));
+          return errorResponse(
+            "SUBSCRIPTION_VERIFICATION_FAILED",
+            "The pending PayPal subscription does not match this account or plan.",
+            409,
+            request,
+          );
+        }
+
+        if (subscription.status === "APPROVAL_PENDING") {
+          const approvalUrl = getApprovalUrl(subscription);
+          if (approvalUrl) return ok({ approval_url: approvalUrl }, request);
+        }
+
+        console.error(JSON.stringify({
+          event: "paypal_pending_subscription_not_resumable",
+          status: subscription.status ?? "UNKNOWN",
+        }));
+        return errorResponse(
+          "SUBSCRIPTION_EXISTS",
+          "A PayPal subscription is already in progress or has changed status. Check your PayPal account before starting another checkout.",
+          409,
+          request,
+        );
+      }
+
       return errorResponse(
         "SUBSCRIPTION_EXISTS",
-        "You already have a Pro subscription awaiting approval or in progress.",
+        "You already have a Pro subscription in progress.",
         409,
         request,
       );
@@ -222,39 +331,10 @@ Deno.serve(async (request) => {
     const subscriptionId = typeof subscription.id === "string"
       ? subscription.id
       : null;
-    const approvalUrl = subscription.links?.find((link) =>
-      link.rel === "approve"
-    )?.href;
-    if (subscriptionId === null || typeof approvalUrl !== "string") {
+    const approvalUrl = getApprovalUrl(subscription);
+    if (subscriptionId === null || approvalUrl === null) {
       console.error(JSON.stringify({
         event: "paypal_subscription_invalid_response",
-      }));
-      return errorResponse(
-        "CHECKOUT_PROVIDER_ERROR",
-        "The payment provider returned an invalid checkout link.",
-        502,
-        request,
-      );
-    }
-
-    let parsedApprovalUrl: URL;
-    try {
-      parsedApprovalUrl = new URL(approvalUrl);
-    } catch {
-      return errorResponse(
-        "CHECKOUT_PROVIDER_ERROR",
-        "The payment provider returned an invalid checkout link.",
-        502,
-        request,
-      );
-    }
-    const approvalHost = parsedApprovalUrl.hostname.toLowerCase();
-    if (
-      parsedApprovalUrl.protocol !== "https:" ||
-      !(approvalHost === "paypal.com" || approvalHost.endsWith(".paypal.com"))
-    ) {
-      console.error(JSON.stringify({
-        event: "paypal_subscription_invalid_approval_url",
       }));
       return errorResponse(
         "CHECKOUT_PROVIDER_ERROR",
