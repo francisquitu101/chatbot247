@@ -944,9 +944,11 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
 }
 
 .luna-chart-marker-tooltip > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+}
+
+.luna-chart-marker-tooltip > span b {
+  color: #17251f;
 }
 
 .luna-chart-state {

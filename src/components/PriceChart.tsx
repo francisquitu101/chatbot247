@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import type { CandlestickData, IChartApi, IPriceLine, ISeriesApi, ISeriesMarkersPluginApi, LineData, SeriesMarker, SeriesMarkerBar, Time, UTCTimestamp } from 'lightweight-charts'
+import type { CandlestickData, IChartApi, IPriceLine, ISeriesApi, ISeriesMarkersPluginApi, LineData, Time, UTCTimestamp } from 'lightweight-charts'
 import { supabase } from '../lib/supabase'
 import type { FinvizAnalystRating, FinvizInsiderTrade } from '../types'
+import { buildChartMarkers, resolveCandleTime, toUtcDay, type ChartMarkerEvent } from './chartMarkers'
 
 export type PriceChartCandle = {
   time: number
@@ -23,20 +24,6 @@ type PriceChartProps = {
   onCandlesChange: (candles: PriceChartCandle[]) => void
 }
 
-type ChartMarkerEvent = {
-  type: 'Insider transaction' | 'Analyst rating'
-  name: string
-  detail: string
-  insiderTransaction?: 'sale' | 'purchase'
-  ratingAction?: 'upgrade' | 'downgrade'
-}
-
-type ChartMarkerData = {
-  markers: SeriesMarker<UTCTimestamp>[]
-  eventsByTime: Map<number, ChartMarkerEvent[]>
-  timeByDate: Map<string, UTCTimestamp>
-}
-
 type MarkerTooltip = {
   x: number
   y: number
@@ -52,19 +39,6 @@ type ChartControl =
   | { action: 'CLEAR_LINES' }
 
 const SAFE_CHART_COLOR = /^#(?:[\da-f]{3}|[\da-f]{6})$/i
-
-function toUtcDay(value: string | null | undefined): number | null {
-  if (!value) return null
-  const datePart = value.match(/^(\d{4}-\d{2}-\d{2})/)?.[1]
-  if (!datePart) return null
-  const date = new Date(`${datePart}T00:00:00.000Z`)
-  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== datePart) return null
-  return Math.floor(date.getTime() / 1000)
-}
-
-function toDateKey(time: number): string {
-  return new Date(time * 1000).toISOString().slice(0, 10)
-}
 
 function toDateRangeTime(value: string): string | null {
   return toUtcDay(value) === null ? null : value
@@ -117,16 +91,6 @@ function readChartControl(value: unknown): ChartControl | null {
   return null
 }
 
-function resolveCandleTime(targetTime: number, candleTimes: number[]): number | null {
-  let previousTime: number | null = null
-  for (const candleTime of candleTimes) {
-    if (candleTime === targetTime) return candleTime
-    if (candleTime > targetTime) break
-    previousTime = candleTime
-  }
-  return previousTime !== null && targetTime - previousTime <= 3 * 24 * 60 * 60 ? previousTime : null
-}
-
 function clearTechnicalLines(
   chart: IChartApi | null,
   series: ISeriesApi<'Candlestick', Time> | null,
@@ -137,129 +101,6 @@ function clearTechnicalLines(
   if (chart) trendSeries.forEach((trend) => chart.removeSeries(trend))
   priceLines.length = 0
   trendSeries.length = 0
-}
-
-function formatInsiderName(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean)
-  if (parts.length < 2) return name.trim() || 'Insider'
-  return `${parts[0][0]}. ${parts[parts.length - 1]}`
-}
-
-function buildChartMarkers(
-  candles: CandlestickData<UTCTimestamp>[],
-  insiderTrades: FinvizInsiderTrade[],
-  ratings: FinvizAnalystRating[],
-): ChartMarkerData {
-  const candleTimes = candles.map((candle) => Number(candle.time)).sort((left, right) => left - right)
-  const eventsByDate = new Map<string, ChartMarkerEvent[]>()
-
-  const addEvent = (date: string | null | undefined, event: ChartMarkerEvent) => {
-    const targetTime = toUtcDay(date)
-    if (targetTime === null) return
-    const dateKey = toDateKey(targetTime)
-    const events = eventsByDate.get(dateKey) ?? []
-    events.push(event)
-    eventsByDate.set(dateKey, events)
-  }
-
-  for (const trade of insiderTrades) {
-    const transaction = trade.transaction.trim()
-    if (/(?:proposed\s+)?sale/i.test(transaction)) {
-      addEvent(trade.transaction_date, {
-        type: 'Insider transaction',
-        name: trade.insider_name.trim() || 'Insider',
-        detail: [transaction, trade.shares ? `${trade.shares} shares` : '', trade.value ? `Value: ${trade.value}` : '']
-          .filter(Boolean).join(' · '),
-        insiderTransaction: 'sale',
-      })
-    } else if (/\b(?:purchase|buy)\b/i.test(transaction)) {
-      addEvent(trade.transaction_date, {
-        type: 'Insider transaction',
-        name: trade.insider_name.trim() || 'Insider',
-        detail: [transaction, trade.shares ? `${trade.shares} shares` : '', trade.value ? `Value: ${trade.value}` : '']
-          .filter(Boolean).join(' · '),
-        insiderTransaction: 'purchase',
-      })
-    }
-  }
-
-  for (const rating of ratings) {
-    const ratingAction = `${rating.action} ${rating.rating_change}`.trim()
-    const isUpgrade = /\bupgrade(?:d)?\b/i.test(ratingAction)
-    const isDowngrade = /\bdowngrade(?:d)?\b/i.test(ratingAction)
-    if (!isUpgrade && !isDowngrade) continue
-    const label = rating.analyst.trim() || 'Analyst'
-    addEvent(rating.rating_date, {
-      type: 'Analyst rating',
-      name: label,
-      detail: [rating.action, rating.rating_change, rating.price_target_change].filter(Boolean).join(' · '),
-      ratingAction: isUpgrade ? 'upgrade' : 'downgrade',
-    })
-  }
-
-  const markerEntries: Array<{ marker: SeriesMarkerBar<UTCTimestamp>; date: string; events: ChartMarkerEvent[] }> = []
-  const timeByDate = new Map<string, UTCTimestamp>()
-  const eventsByCandle = new Map<number, ChartMarkerEvent[]>()
-  for (const [date, events] of eventsByDate) {
-    const targetTime = toUtcDay(date)
-    if (targetTime === null) continue
-    const candleTime = resolveCandleTime(targetTime, candleTimes)
-    if (candleTime === null) continue
-    const candleEvents = eventsByCandle.get(candleTime) ?? []
-    candleEvents.push(...events)
-    eventsByCandle.set(candleTime, candleEvents)
-    timeByDate.set(date, candleTime as UTCTimestamp)
-  }
-
-  for (const [candleTime, events] of eventsByCandle) {
-    const date = new Date(candleTime * 1000).toISOString().slice(0, 10)
-    const sales = events.filter((event) => event.insiderTransaction === 'sale').length
-    const purchases = events.filter((event) => event.insiderTransaction === 'purchase').length
-    const upgrades = events.filter((event) => event.ratingAction === 'upgrade').length
-    const downgrades = events.filter((event) => event.ratingAction === 'downgrade').length
-    const categories = Number(sales + purchases > 0) + Number(upgrades + downgrades > 0)
-
-    let marker: Omit<SeriesMarkerBar<UTCTimestamp>, 'time' | 'id'>
-    if (events.length === 1) {
-      const [event] = events
-      if (event.insiderTransaction === 'sale') {
-        marker = { position: 'aboveBar', shape: 'arrowDown', color: '#dc4c4c', text: 'Sale', size: 1 }
-      } else if (event.insiderTransaction === 'purchase') {
-        marker = { position: 'belowBar', shape: 'arrowUp', color: '#16845b', text: 'Buy', size: 1 }
-      } else if (event.ratingAction === 'upgrade') {
-        marker = { position: 'belowBar', shape: 'circle', color: '#16845b', text: 'Upgrade', size: 1 }
-      } else if (event.ratingAction === 'downgrade') {
-        marker = { position: 'belowBar', shape: 'circle', color: '#3978b8', text: 'Downgrade', size: 1 }
-      } else {
-        marker = { position: 'belowBar', shape: 'circle', color: '#3978b8', text: 'Rating', size: 1 }
-      }
-    } else if (categories > 1) {
-      marker = { position: 'aboveBar', shape: 'circle', color: '#3978b8', text: `${events.length} Events`, size: 1 }
-    } else if (sales > 0 && purchases === 0) {
-      marker = { position: 'aboveBar', shape: 'arrowDown', color: '#dc4c4c', text: `${sales} Sales`, size: 1 }
-    } else if (purchases > 0 && sales === 0) {
-      marker = { position: 'belowBar', shape: 'arrowUp', color: '#16845b', text: `${purchases} Purchases`, size: 1 }
-    } else if (upgrades > 0 && downgrades === 0) {
-      marker = { position: 'belowBar', shape: 'circle', color: '#16845b', text: `${upgrades} Upgrades`, size: 1 }
-    } else if (downgrades > 0 && upgrades === 0) {
-      marker = { position: 'belowBar', shape: 'circle', color: '#3978b8', text: `${downgrades} Downgrades`, size: 1 }
-    } else {
-      marker = { position: 'aboveBar', shape: 'circle', color: '#3978b8', text: `${events.length} Events`, size: 1 }
-    }
-
-    markerEntries.push({ marker: { ...marker, time: candleTime as UTCTimestamp, id: date }, date, events })
-    timeByDate.set(date, candleTime as UTCTimestamp)
-  }
-  markerEntries.sort((left, right) => Number(left.marker.time) - Number(right.marker.time) || left.date.localeCompare(right.date))
-  const eventsByTime = new Map<number, ChartMarkerEvent[]>()
-  for (const { marker, events } of markerEntries) {
-    const time = Number(marker.time)
-    const dayEvents = eventsByTime.get(time) ?? []
-    dayEvents.push(...events)
-    eventsByTime.set(time, dayEvents)
-  }
-
-  return { markers: markerEntries.map(({ marker }) => marker), eventsByTime, timeByDate }
 }
 
 function formatMarkerDate(time: number): string {
@@ -592,9 +433,9 @@ export function PriceChart({ ticker, insiderTrades, ratings, onCandlesChange }: 
             <strong>{formatMarkerDate(markerTooltip.time)}</strong>
             {markerTooltip.events.map((event, index) => (
               <span key={`${event.type}-${event.name}-${index}`}>
-                {event.type === 'Insider transaction'
-                  ? `Insider: ${formatInsiderName(event.name)} (${event.insiderTransaction === 'sale' ? 'Sale' : 'Purchase'})`
-                  : `Rating: ${event.name} (${event.ratingAction === 'upgrade' ? 'Upgrade' : 'Downgrade'})`}
+                <b>{event.type === 'Insider transaction' ? `Insider: ${event.name}` : `Analyst: ${event.name}`}</b>
+                <br />
+                {event.detail}
               </span>
             ))}
           </div>
