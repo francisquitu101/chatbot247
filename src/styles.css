@@ -252,8 +252,8 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   padding: 30px 26px;
   overflow: hidden;
   background:
-    radial-gradient(ellipse at 18% 12%, rgba(148, 163, 184, 0.2), transparent 38%),
-    radial-gradient(ellipse at 82% 86%, rgba(253, 186, 116, 0.12), transparent 42%),
+    linear-gradient(135deg, rgba(12, 24, 37, 0.24), rgba(12, 18, 27, 0.4)),
+    url('/branding/mountain-wallpaper.webp') center 52% / cover no-repeat,
     linear-gradient(135deg, #303740 0%, #1e232a 52%, #15191f 100%);
 }
 
@@ -270,22 +270,15 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
 
 .marketmole-navbar-brand {
   display: inline-flex;
-  align-items: baseline;
-  color: #f4f7f8;
-  font-size: 21px;
-  font-weight: 500;
-  letter-spacing: -0.055em;
+  align-items: center;
+  flex: 0 0 auto;
 }
 
-.marketmole-navbar-brand strong {
-  color: var(--brand-peach);
-  font-weight: 700;
-}
-
-.marketmole-navbar-dot {
-  color: var(--brand-peach);
-  font-size: 27px;
-  font-weight: 700;
+.marketmole-navbar-brand img {
+  display: block;
+  width: 360px;
+  max-height: 84px;
+  object-fit: contain;
 }
 
 .marketmole-navbar-caption {
@@ -2959,7 +2952,10 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
     gap: 6px 12px;
   }
 
-  .marketmole-navbar-brand { font-size: 19px; }
+  .marketmole-navbar-brand img {
+    width: 285px;
+    max-height: 68px;
+  }
   .marketmole-navbar-caption { display: none; }
   .marketmole-navbar .luna-watchlist {
     order: 1;
