@@ -6,10 +6,12 @@ import {
   errorResponse,
   handleOptions,
   ok,
+  readJson,
 } from "../_shared/response.ts";
 import {
   getPayPalAccessToken,
   getPayPalApiUrl,
+  getPayPalClientId,
   getPayPalPlanId,
 } from "../_shared/paypal.ts";
 
@@ -93,29 +95,207 @@ Deno.serve(async (request) => {
     const user = await requireAuthenticatedUser(request);
     const apiUrl = getPayPalApiUrl();
     const planId = getPayPalPlanId();
-
-    let appBaseUrl: URL;
-    try {
-      appBaseUrl = new URL(
-        Deno.env.get("VITE_APP_BASE_URL") || "http://localhost:5173",
-      );
-      if (
-        appBaseUrl.protocol !== "https:" &&
-        appBaseUrl.hostname !== "localhost" &&
-        appBaseUrl.hostname !== "127.0.0.1"
-      ) {
-        throw new Error("INVALID_APP_BASE_URL");
+    const clientId = getPayPalClientId();
+    const client = createBackendClient("service_role");
+    const body = await readJson(request);
+    if (body?.subscription_id !== undefined) {
+      const subscriptionId = typeof body.subscription_id === "string"
+        ? body.subscription_id.trim()
+        : "";
+      if (!/^[A-Z0-9-]{1,64}$/i.test(subscriptionId)) {
+        return errorResponse(
+          "INVALID_SUBSCRIPTION_ID",
+          "A valid PayPal subscription ID is required.",
+          400,
+          request,
+        );
       }
-    } catch {
-      return errorResponse(
-        "CHECKOUT_NOT_CONFIGURED",
-        "The checkout return URL is invalid.",
-        500,
-        request,
-      );
+
+      const { data: recordedSubscription, error: recordedLookupError } =
+        await client
+          .from("pro_subscriptions")
+          .select("user_id, paypal_plan_id, status")
+          .eq("paypal_subscription_id", subscriptionId)
+          .maybeSingle();
+      if (recordedLookupError) {
+        console.error(JSON.stringify({
+          event: "paypal_subscription_lookup_failed",
+          code: recordedLookupError.code ?? "SUBSCRIPTION_LOOKUP_FAILED",
+        }));
+        return errorResponse(
+          "CHECKOUT_ERROR",
+          "Unable to verify this PayPal subscription.",
+          500,
+          request,
+        );
+      }
+      if (recordedSubscription) {
+        if (
+          recordedSubscription.user_id === user.id &&
+          recordedSubscription.paypal_plan_id === planId
+        ) {
+          return ok({
+            subscription_id: subscriptionId,
+            status: recordedSubscription.status,
+          }, request);
+        }
+        return errorResponse(
+          "SUBSCRIPTION_OWNERSHIP_MISMATCH",
+          "This PayPal subscription is already linked to another account.",
+          409,
+          request,
+        );
+      }
+
+      let subscriptionResponse: Response;
+      const accessToken = await getPayPalAccessToken();
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), PAYPAL_TIMEOUT_MS);
+      try {
+        subscriptionResponse = await fetch(
+          `${apiUrl}/v1/billing/subscriptions/${
+            encodeURIComponent(subscriptionId)
+          }`,
+          {
+            headers: { Authorization: `Bearer ${accessToken}` },
+            signal: controller.signal,
+          },
+        );
+      } catch (error) {
+        const code = error instanceof DOMException &&
+            error.name === "AbortError"
+          ? "PAYPAL_TIMEOUT"
+          : error instanceof Error
+          ? error.message
+          : "PAYPAL_UNAVAILABLE";
+        console.error(JSON.stringify({
+          event: "paypal_subscription_registration_lookup_failed",
+          code,
+        }));
+        return errorResponse(
+          "CHECKOUT_PROVIDER_ERROR",
+          "Unable to verify the PayPal subscription. Please try again.",
+          502,
+          request,
+        );
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (!subscriptionResponse.ok) {
+        console.error(JSON.stringify({
+          event: "paypal_subscription_registration_lookup_failed",
+          status: subscriptionResponse.status,
+        }));
+        return errorResponse(
+          "CHECKOUT_PROVIDER_ERROR",
+          "Unable to verify the PayPal subscription. Please try again.",
+          502,
+          request,
+        );
+      }
+
+      const subscription = await subscriptionResponse.json() as PayPalSubscription;
+      if (
+        subscription.id !== subscriptionId ||
+        subscription.custom_id !== user.id ||
+        subscription.plan_id !== planId ||
+        !["APPROVAL_PENDING", "ACTIVE"].includes(String(subscription.status))
+      ) {
+        console.error(JSON.stringify({
+          event: "paypal_subscription_registration_mismatch",
+        }));
+        return errorResponse(
+          "SUBSCRIPTION_VERIFICATION_FAILED",
+          "The PayPal subscription does not match this account or plan.",
+          409,
+          request,
+        );
+      }
+
+      const { error: insertError } = await client
+        .from("pro_subscriptions")
+        .insert({
+          user_id: user.id,
+          paypal_subscription_id: subscriptionId,
+          paypal_plan_id: planId,
+          status: subscription.status === "ACTIVE"
+            ? "active"
+            : "approval_pending",
+        });
+      if (insertError) {
+        const { data: racedSubscription } = await client
+          .from("pro_subscriptions")
+          .select("user_id, paypal_plan_id, status")
+          .eq("paypal_subscription_id", subscriptionId)
+          .maybeSingle();
+        if (
+          racedSubscription?.user_id === user.id &&
+          racedSubscription.paypal_plan_id === planId
+        ) {
+          return ok({
+            subscription_id: subscriptionId,
+            status: racedSubscription.status,
+          }, request);
+        }
+
+        const cancelController = new AbortController();
+        const cancelTimeout = setTimeout(
+          () => cancelController.abort(),
+          PAYPAL_TIMEOUT_MS,
+        );
+        try {
+          const cancelResponse = await fetch(
+            `${apiUrl}/v1/billing/subscriptions/${
+              encodeURIComponent(subscriptionId)
+            }/cancel`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json",
+                "PayPal-Request-Id": crypto.randomUUID(),
+              },
+              body: JSON.stringify({
+                reason: "MarketMole could not record the subscription.",
+              }),
+              signal: cancelController.signal,
+            },
+          );
+          if (!cancelResponse.ok) {
+            console.error(JSON.stringify({
+              event: "paypal_orphan_subscription_cancel_failed",
+              status: cancelResponse.status,
+            }));
+          }
+        } catch (cancelError) {
+          console.error(JSON.stringify({
+            event: "paypal_orphan_subscription_cancel_failed",
+            code: cancelError instanceof Error
+              ? cancelError.name
+              : "CANCEL_FAILED",
+          }));
+        } finally {
+          clearTimeout(cancelTimeout);
+        }
+
+        console.error(JSON.stringify({
+          event: "paypal_subscription_record_failed",
+          code: insertError.code ?? "SUBSCRIPTION_INSERT_FAILED",
+        }));
+        return errorResponse(
+          "CHECKOUT_ERROR",
+          "Unable to record the subscription. Please contact support before retrying.",
+          500,
+          request,
+        );
+      }
+
+      return ok({
+        subscription_id: subscriptionId,
+        status: subscription.status === "ACTIVE" ? "active" : "approval_pending",
+      }, request);
     }
 
-    const client = createBackendClient("service_role");
     const { data: existingSubscription, error: existingError } = await client
       .from("pro_subscriptions")
       .select("paypal_subscription_id, paypal_plan_id, status")
@@ -233,7 +413,6 @@ Deno.serve(async (request) => {
     const accessToken = await getPayPalAccessToken();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), PAYPAL_TIMEOUT_MS);
-    let response: Response;
     try {
       const planResponse = await fetch(
         `${apiUrl}/v1/billing/plans/${encodeURIComponent(planId)}`,
@@ -268,32 +447,10 @@ Deno.serve(async (request) => {
         );
       }
 
-      response = await fetch(`${apiUrl}/v1/billing/subscriptions`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-          Prefer: "return=representation",
-          "PayPal-Request-Id": crypto.randomUUID(),
-        },
-        body: JSON.stringify({
-          plan_id: planId,
-          custom_id: user.id,
-          application_context: {
-            brand_name: "MarketMole",
-            locale: "en-US",
-            shipping_preference: "NO_SHIPPING",
-            user_action: "SUBSCRIBE_NOW",
-            payment_method: {
-              payer_selected: "PAYPAL",
-              payee_preferred: "IMMEDIATE_PAYMENT_REQUIRED",
-            },
-            return_url: new URL("/checkout/success", appBaseUrl).toString(),
-            cancel_url: new URL("/checkout/failure", appBaseUrl).toString(),
-          },
-        }),
-        signal: controller.signal,
-      });
+      return ok({
+        client_id: clientId,
+        plan_id: planId,
+      }, request);
     } catch (error) {
       const code = error instanceof DOMException && error.name === "AbortError"
         ? "PAYPAL_TIMEOUT"
@@ -301,7 +458,7 @@ Deno.serve(async (request) => {
         ? error.message
         : "PAYPAL_UNAVAILABLE";
       console.error(JSON.stringify({
-        event: "paypal_subscription_creation_failed",
+        event: "paypal_checkout_preparation_failed",
         code,
       }));
       return errorResponse(
@@ -313,99 +470,6 @@ Deno.serve(async (request) => {
     } finally {
       clearTimeout(timeout);
     }
-
-    if (!response.ok) {
-      console.error(JSON.stringify({
-        event: "paypal_subscription_rejected",
-        status: response.status,
-      }));
-      return errorResponse(
-        "CHECKOUT_PROVIDER_ERROR",
-        "Unable to start checkout. Please try again.",
-        502,
-        request,
-      );
-    }
-
-    const subscription = await response.json() as PayPalSubscription;
-    const subscriptionId = typeof subscription.id === "string"
-      ? subscription.id
-      : null;
-    const approvalUrl = getApprovalUrl(subscription);
-    if (subscriptionId === null || approvalUrl === null) {
-      console.error(JSON.stringify({
-        event: "paypal_subscription_invalid_response",
-      }));
-      return errorResponse(
-        "CHECKOUT_PROVIDER_ERROR",
-        "The payment provider returned an invalid checkout link.",
-        502,
-        request,
-      );
-    }
-
-    const { error: insertError } = await client
-      .from("pro_subscriptions")
-      .insert({
-        user_id: user.id,
-        paypal_subscription_id: subscriptionId,
-        paypal_plan_id: planId,
-        status: subscription.status === "ACTIVE" ? "active" : "approval_pending",
-      });
-    if (insertError) {
-        const cancelController = new AbortController();
-        const cancelTimeout = setTimeout(
-          () => cancelController.abort(),
-          PAYPAL_TIMEOUT_MS,
-        );
-        try {
-          const cancelResponse = await fetch(
-            `${apiUrl}/v1/billing/subscriptions/${
-              encodeURIComponent(subscriptionId)
-            }/cancel`,
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
-                "Content-Type": "application/json",
-                "PayPal-Request-Id": crypto.randomUUID(),
-              },
-              body: JSON.stringify({
-                reason: "MarketMole could not record the subscription.",
-              }),
-              signal: cancelController.signal,
-            },
-          );
-          if (!cancelResponse.ok) {
-            console.error(JSON.stringify({
-              event: "paypal_orphan_subscription_cancel_failed",
-              status: cancelResponse.status,
-            }));
-          }
-        } catch (cancelError) {
-          console.error(JSON.stringify({
-            event: "paypal_orphan_subscription_cancel_failed",
-            code: cancelError instanceof Error
-              ? cancelError.name
-              : "CANCEL_FAILED",
-          }));
-        } finally {
-          clearTimeout(cancelTimeout);
-        }
-
-        console.error(JSON.stringify({
-          event: "paypal_subscription_record_failed",
-          code: insertError.code ?? "SUBSCRIPTION_INSERT_FAILED",
-      }));
-      return errorResponse(
-        "CHECKOUT_ERROR",
-        "Unable to record the subscription. Please contact support before retrying.",
-        500,
-        request,
-      );
-    }
-
-    return ok({ approval_url: approvalUrl }, request);
   } catch (error) {
     const code = error instanceof Error ? error.message : "CHECKOUT_FAILED";
     if (code === "AUTHORIZATION_REQUIRED" || code === "INVALID_ACCESS_TOKEN") {
@@ -426,6 +490,7 @@ Deno.serve(async (request) => {
     }
     if (
       code === "PAYPAL_CREDENTIALS_MISSING" ||
+      code === "PAYPAL_CLIENT_ID_MISSING" ||
       code === "PAYPAL_API_URL_MISSING" ||
       code === "PAYPAL_API_URL_INVALID" ||
       code === "PAYPAL_PLAN_ID_INVALID"

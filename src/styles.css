@@ -669,6 +669,11 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   font-size: 10px;
 }
 
+.luna-paypal-buttons {
+  width: 190px;
+  min-width: 150px;
+}
+
 .luna-session-email {
   max-width: 180px;
   overflow: hidden;

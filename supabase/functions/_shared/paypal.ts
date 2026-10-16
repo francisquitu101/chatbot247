@@ -34,6 +34,14 @@ export function getPayPalPlanId(): string {
   return planId;
 }
 
+export function getPayPalClientId(): string {
+  const clientId = Deno.env.get("PAYPAL_CLIENT_ID")?.trim();
+  if (!clientId) {
+    throw new Error("PAYPAL_CLIENT_ID_MISSING");
+  }
+  return clientId;
+}
+
 export async function getPayPalAccessToken(): Promise<string> {
   const clientId = Deno.env.get("PAYPAL_CLIENT_ID");
   const clientSecret = Deno.env.get("PAYPAL_CLIENT_SECRET");

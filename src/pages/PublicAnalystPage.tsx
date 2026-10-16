@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { ArrowRight, Brain, ChartColumnIncreasing, Chrome, Crown, ExternalLink, FileText, FolderOpen, LogOut, Newspaper, Plus, RefreshCw, Star, TrendingUp } from 'lucide-react'
 import { Navbar } from '../components/Navbar'
+import type { PayPalSubscriptionButtonProps } from '../components/PayPalSubscriptionButtons'
 import { PriceChart, type PriceChartCandle } from '../components/PriceChart'
 import { TechnicalCopilotPanel } from '../components/TechnicalCopilotPanel'
 import { GlobalAnalysisReport, type GlobalAnalysisHistoryEntry, type GlobalTickerAnalysis } from '../components/GlobalAnalysisReport'
@@ -14,6 +15,9 @@ import type { FinvizAnalystRating, FinvizInsiderTrade } from '../types'
 const DEMO_PATTERNS = [/\[DEMO SEEDED\]/i, /demo_seed/i, /synthetic_test/i, /demo seed/i, /synthetic/i, /development test/i]
 const FREE_WATCHLIST_LIMIT = 3
 const PRO_WATCHLIST_LIMIT = 10
+const PayPalSubscriptionButtons = lazy(() => import('../components/PayPalSubscriptionButtons').then((module) => ({
+  default: module.PayPalSubscriptionButtons,
+})))
 
 function isWatchlistLimitError(error: unknown): boolean {
   return error instanceof WatchlistError && error.code === 'WATCHLIST_LIMIT_REACHED'
@@ -155,6 +159,11 @@ type GlobalAnalysisFreshness = {
   ticker: string
   has_new_data?: boolean
   unchanged?: boolean
+}
+
+type PayPalCheckoutConfig = {
+  clientId: string
+  planId: string
 }
 
 function isGlobalTickerAnalysis(value: unknown): value is GlobalTickerAnalysis {
@@ -310,6 +319,7 @@ export function AnalystExperienceDisplay({
   const [profileLoadError, setProfileLoadError] = useState<string | null>(null)
   const [checkoutBusy, setCheckoutBusy] = useState(false)
   const [checkoutError, setCheckoutError] = useState<string | null>(null)
+  const [checkoutConfig, setCheckoutConfig] = useState<PayPalCheckoutConfig | null>(null)
   const [globalAnalysis, setGlobalAnalysis] = useState<GlobalAnalysisHistoryEntry | null>(null)
   const [globalAnalysisHistory, setGlobalAnalysisHistory] = useState<GlobalAnalysisHistoryEntry[]>([])
   const [globalAnalysisBusy, setGlobalAnalysisBusy] = useState(false)
@@ -536,22 +546,63 @@ export function AnalystExperienceDisplay({
   }, [appendTerminalEvents])
 
   async function handleUpgradeToPro() {
-    if (!supabase || !session || checkoutBusy) return
+    if (!supabase || !session || checkoutBusy || checkoutConfig) return
     setCheckoutBusy(true)
     setCheckoutError(null)
     try {
       const { data: response, error: invokeError } = await supabase.functions.invoke<{
         success: boolean
-        data?: { approval_url?: unknown }
+        data?: { approval_url?: unknown; client_id?: unknown; plan_id?: unknown }
       }>('create-checkout', { body: {} })
       if (invokeError) throw invokeError
       const checkoutUrl = response?.success ? getPayPalCheckoutUrl(response.data?.approval_url) : null
-      if (!checkoutUrl) throw new Error('The payment provider returned an invalid checkout link.')
-      window.location.assign(checkoutUrl.toString())
+      if (checkoutUrl) {
+        window.location.assign(checkoutUrl.toString())
+        return
+      }
+      const clientId = response?.data?.client_id
+      const planId = response?.data?.plan_id
+      if (!response?.success || typeof clientId !== 'string' || !clientId || typeof planId !== 'string' || !planId) {
+        throw new Error('The payment provider returned an invalid checkout configuration.')
+      }
+      setCheckoutConfig({ clientId, planId })
+      setCheckoutBusy(false)
     } catch (error) {
       setCheckoutError(getErrorMessage(error, 'Unable to start checkout. Please try again.'))
       setCheckoutBusy(false)
     }
+  }
+
+  async function handlePayPalSubscriptionCreate(
+    _data: Record<string, unknown>,
+    actions: Parameters<PayPalSubscriptionButtonProps['createSubscription']>[1],
+  ): Promise<string> {
+    if (!supabase || !session || !checkoutConfig) {
+      throw new Error('Sign in before starting a PayPal subscription.')
+    }
+    setCheckoutBusy(true)
+    setCheckoutError(null)
+    const subscriptionId = await actions.subscription.create({
+      plan_id: checkoutConfig.planId,
+      custom_id: session.user.id,
+      application_context: {
+        brand_name: 'MarketMole',
+        locale: 'en-US',
+        shipping_preference: 'NO_SHIPPING',
+        user_action: 'SUBSCRIBE_NOW',
+        return_url: new URL('/checkout/success', window.location.origin).toString(),
+        cancel_url: new URL('/checkout/failure', window.location.origin).toString(),
+      },
+    })
+    const { data: response, error: invokeError } = await supabase.functions.invoke<{
+      success: boolean
+      error?: { message?: string }
+    }>('create-checkout', { body: { subscription_id: subscriptionId } })
+    if (invokeError) throw invokeError
+    if (!response?.success) {
+      throw new Error(response?.error?.message ?? 'Unable to record the PayPal subscription.')
+    }
+    return subscriptionId
   }
 
   function handleWatchlistSubmit(event: FormEvent<HTMLFormElement>) {
@@ -1514,7 +1565,7 @@ export function AnalystExperienceDisplay({
                 {!authBusy && <ArrowRight size={15} />}
               </button>
             )}
-            {session && isPro === false && (
+            {session && isPro === false && !checkoutConfig && (
               <button
                 type="button"
                 className="luna-upgrade-button"
@@ -1523,8 +1574,34 @@ export function AnalystExperienceDisplay({
                 disabled={checkoutBusy}
               >
                 <Crown size={14} />
-                {checkoutBusy ? 'Opening checkout...' : 'Upgrade to Pro · $6.90/mo'}
+                {checkoutBusy ? 'Preparing checkout...' : 'Upgrade to Pro · $6.90/mo'}
               </button>
+            )}
+            {session && checkoutConfig && (
+              <div className="luna-paypal-buttons">
+                <Suspense fallback={<span role="status">Loading PayPal checkout…</span>}>
+                  <PayPalSubscriptionButtons
+                    clientId={checkoutConfig.clientId}
+                    createSubscription={handlePayPalSubscriptionCreate}
+                    onApprove={async (data) => {
+                      if (!data.subscriptionID) {
+                        setCheckoutError('PayPal did not return a subscription ID.')
+                        setCheckoutBusy(false)
+                        return
+                      }
+                      setCheckoutBusy(true)
+                      window.location.assign(
+                        `/checkout/success?subscription_id=${encodeURIComponent(data.subscriptionID)}`,
+                      )
+                    }}
+                    onCancel={() => setCheckoutBusy(false)}
+                    onError={(error) => {
+                      setCheckoutError(getErrorMessage(error, 'PayPal could not start checkout. Please try again.'))
+                      setCheckoutBusy(false)
+                    }}
+                  />
+                </Suspense>
+              </div>
             )}
             {session && profileLoadError && <span className="luna-checkout-error" role="status">{profileLoadError}</span>}
             {session && checkoutError && <span className="luna-checkout-error" role="alert">{checkoutError}</span>}
