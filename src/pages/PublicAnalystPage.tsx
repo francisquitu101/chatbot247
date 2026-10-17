@@ -198,7 +198,7 @@ const PRO_BANNER_MESSAGES = [
 
 type DesktopPosition = { x: number; y: number }
 
-const DESKTOP_LAYOUT_KEY = 'norvexai-desktop-layout-v1'
+const DESKTOP_LAYOUT_KEY = 'norvexai-desktop-layout-v2'
 
 function readDesktopPositions(): Record<string, DesktopPosition> {
   try {
@@ -230,24 +230,24 @@ function createDesktopWindow(id: DesktopWindowId, zIndex: number): DesktopWindow
   const viewportHeight = typeof window === 'undefined' ? 800 : window.innerHeight
   const isMobile = viewportWidth <= 620
   const width = id === 'terminal'
-    ? Math.min(isMobile ? viewportWidth - 24 : 390, isMobile ? viewportWidth - 24 : viewportWidth * 0.34)
-    : Math.min(isMobile ? viewportWidth - 24 : 720, isMobile ? viewportWidth - 24 : viewportWidth * 0.62)
+    ? Math.min(isMobile ? viewportWidth - 24 : 320, isMobile ? viewportWidth - 24 : viewportWidth * 0.3)
+    : Math.min(isMobile ? viewportWidth - 24 : 620, isMobile ? viewportWidth - 24 : viewportWidth * 0.52)
   const height = id === 'terminal'
-    ? Math.min(isMobile ? 220 : 340, viewportHeight - (isMobile ? 260 : 150))
-    : Math.min(isMobile ? viewportHeight - 340 : 680, viewportHeight - (isMobile ? 340 : 150))
+    ? Math.min(isMobile ? 220 : Math.min(360, viewportHeight * 0.68), viewportHeight - (isMobile ? 260 : 120))
+    : Math.min(isMobile ? viewportHeight - 320 : Math.min(620, viewportHeight * 0.82), viewportHeight - (isMobile ? 320 : 120))
   const stagger = Math.max(0, zIndex - 2) % 4
   return {
     id,
     x: isMobile
       ? 12
       : id === 'terminal'
-        ? Math.max(120, viewportWidth - width - 64)
-        : Math.max(220, (viewportWidth - width) / 2 + stagger * 42),
+        ? Math.max(120, viewportWidth - width - 30)
+        : Math.max(160, (viewportWidth - width) / 2 + stagger * 28),
     y: isMobile
-      ? 138 + (id === 'terminal' ? 48 : stagger * 24)
+      ? 108 + (id === 'terminal' ? 48 : stagger * 20)
       : id === 'terminal'
-        ? 160
-        : Math.max(100, (viewportHeight - height) / 2 + stagger * 36),
+        ? Math.max(112, viewportHeight * 0.16)
+        : Math.max(88, viewportHeight * 0.12 + stagger * 26),
     width: Math.max(280, width),
     height: Math.max(id === 'terminal' ? 200 : isMobile ? 280 : 340, height),
     isMinimized: false,
@@ -255,6 +255,25 @@ function createDesktopWindow(id: DesktopWindowId, zIndex: number): DesktopWindow
     restoreGeometry: null,
     zIndex,
   }
+}
+
+function MarketTickerTape({ ticker }: { ticker: string }) {
+  const items = [
+    `> NORVEXAI / ${ticker} MARKET DESK`,
+    'SEC FILINGS: MONITORING',
+    'INSIDER ACTIVITY: TRACKING',
+    'ANALYST RATINGS: UPDATED',
+    'MARKET NEWS: LIVE FEED',
+    'RESEARCH TERMINAL / READY',
+  ]
+  const tape = [...items, ...items]
+  return (
+    <div className="norvexai-market-tape" aria-label="Norvexai market ticker">
+      <div className="norvexai-market-tape-track" aria-hidden="true">
+        {tape.map((item, index) => <span key={`${index}-${item}`}>{item}</span>)}
+      </div>
+    </div>
+  )
 }
 
 function ProBanner() {
@@ -1778,6 +1797,7 @@ export function AnalystExperienceDisplay({
       ref={desktopShellRef}
       className={`luna-chat-shell${isPro === true ? ' has-pro' : ''}`}
     >
+      <MarketTickerTape ticker={activeTicker} />
       <Navbar>{watchlistPanel}</Navbar>
       {isPro === true && <ProBanner />}
       <div
@@ -1793,9 +1813,19 @@ export function AnalystExperienceDisplay({
           const mobileLayout = window.innerWidth <= 620
           const mobileColumns = Math.max(1, Math.floor((window.innerWidth - 20) / 100))
           const iconHeight = mobileLayout ? 68 : 78
+          const desktopIconLayout: Record<DesktopWindowId, DesktopPosition> = {
+            chart: { x: 0, y: 32 },
+            sec: { x: 0, y: 116 },
+            insider: { x: 0, y: 200 },
+            ratings: { x: 0, y: 284 },
+            news: { x: 92, y: 32 },
+            analysis: { x: 92, y: 116 },
+            pricing: { x: 92, y: 200 },
+            terminal: { x: 92, y: 284 },
+          }
           const defaultPosition = desktopPositions[key] ?? {
-            x: mobileLayout ? (index % mobileColumns) * 100 : index < 4 ? 0 : 104,
-            y: mobileLayout ? Math.floor(index / mobileColumns) * 70 : (index % 4) * 88,
+            x: mobileLayout ? (index % mobileColumns) * 100 : desktopIconLayout[id].x,
+            y: mobileLayout ? Math.floor(index / mobileColumns) * 70 : desktopIconLayout[id].y,
           }
           const maxX = Math.max(0, window.innerWidth - (mobileLayout ? 20 : 36) - 96)
           const maxY = mobileLayout

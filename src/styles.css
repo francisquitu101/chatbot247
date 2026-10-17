@@ -257,15 +257,56 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
     linear-gradient(135deg, #303740 0%, #1e232a 52%, #15191f 100%);
 }
 
+.norvexai-market-tape {
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 23px;
+  overflow: hidden;
+  border-bottom: 1px solid rgba(160, 210, 255, 0.2);
+  background: rgba(5, 15, 25, 0.64);
+  color: #a9d8ff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 9px;
+  line-height: 22px;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+
+.norvexai-market-tape-track {
+  display: flex;
+  width: max-content;
+  animation: norvexai-market-tape-scroll 42s linear infinite;
+}
+
+.norvexai-market-tape-track span {
+  flex: 0 0 auto;
+  padding: 0 28px;
+}
+
+.norvexai-market-tape-track span::before {
+  margin-right: 9px;
+  color: #69b8ff;
+  content: '///';
+}
+
+@keyframes norvexai-market-tape-scroll {
+  to { transform: translateX(-50%); }
+}
+
 .norvexai-navbar {
   position: absolute;
   z-index: 4;
-  top: 22px;
+  top: 34px;
   left: 28px;
   right: 28px;
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 14px;
 }
 
 .norvexai-navbar-brand {
@@ -276,8 +317,8 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
 
 .norvexai-navbar-brand img {
   display: block;
-  width: 160px;
-  max-height: 84px;
+  width: 136px;
+  max-height: 68px;
   object-fit: contain;
 }
 
@@ -394,7 +435,8 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
 .luna-desktop-icons {
   position: absolute;
   z-index: 2;
-  inset: 96px 18px 20px;
+  inset: 62px auto 20px 18px;
+  width: 176px;
   pointer-events: none;
 }
 
@@ -2988,7 +3030,8 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .luna-news-brief-terminal { animation: none; }
+  .luna-news-brief-terminal,
+  .norvexai-market-tape-track { animation: none; }
 }
 
 .luna-news-empty {
@@ -3050,14 +3093,14 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   }
 
   .norvexai-pro-banner {
-    top: 104px;
+    top: 108px;
     gap: 6px;
     padding: 7px 10px;
     font-size: 9px;
   }
 
   .norvexai-navbar {
-    top: 14px;
+    top: 28px;
     left: 18px;
     right: 18px;
     flex-wrap: wrap;
@@ -3065,13 +3108,13 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   }
 
   .norvexai-navbar-brand img {
-    width: 128px;
-    max-height: 68px;
+    width: 112px;
+    max-height: 58px;
   }
   .norvexai-navbar .luna-watchlist {
     order: 1;
     flex: 1 0 100%;
-    min-height: 36px;
+    min-height: 42px;
     gap: 6px;
   }
   .norvexai-navbar .luna-watchlist-tickers { flex: 1 1 auto; }
@@ -3079,6 +3122,14 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
     flex: 0 0 118px;
   }
   .norvexai-navbar .luna-watchlist-count { font-size: 7px; }
+
+  .norvexai-market-tape {
+    height: 20px;
+    font-size: 8px;
+    line-height: 19px;
+  }
+
+  .norvexai-market-tape-track span { padding: 0 18px; }
 
   .luna-desktop-icons {
     inset: auto 10px 12px;
