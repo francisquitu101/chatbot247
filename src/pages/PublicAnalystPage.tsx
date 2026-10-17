@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import type { Session } from '@supabase/supabase-js'
+import { FunctionsHttpError, type Session } from '@supabase/supabase-js'
 import { ArrowRight, Brain, ChartColumnIncreasing, Chrome, Crown, ExternalLink, FileText, FolderOpen, LogOut, Newspaper, Plus, RefreshCw, Star, TrendingUp } from 'lucide-react'
 import { Navbar } from '../components/Navbar'
 import type { PayPalSubscriptionButtonProps } from '../components/PayPalSubscriptionButtons'
@@ -87,18 +87,6 @@ function readText(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null
 }
 
-function getPayPalCheckoutUrl(value: unknown): URL | null {
-  if (typeof value !== 'string') return null
-  try {
-    const url = new URL(value)
-    const hostname = url.hostname.toLowerCase()
-    const isPayPalHost = hostname === 'paypal.com' || hostname.endsWith('.paypal.com')
-    return url.protocol === 'https:' && isPayPalHost ? url : null
-  } catch {
-    return null
-  }
-}
-
 function getErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message) return error.message
   if (error && typeof error === 'object') {
@@ -123,6 +111,38 @@ function getErrorMessage(error: unknown, fallback: string): string {
     if (details.length > 0) return details.join(' · ')
   }
   return fallback
+}
+
+async function getCheckoutErrorMessage(error: unknown, fallback: string): Promise<string> {
+  if (error instanceof FunctionsHttpError && error.context instanceof Response) {
+    try {
+      const payload: unknown = await error.context.clone().json()
+      console.error('PayPal checkout Edge Function returned an error', {
+        status: error.context.status,
+        payload,
+      })
+      if (payload && typeof payload === 'object' && 'error' in payload) {
+        const detail = payload.error
+        if (detail && typeof detail === 'object' && 'message' in detail && typeof detail.message === 'string') {
+          return detail.message
+        }
+      }
+      return fallback
+    } catch (parseError) {
+      console.error('Unable to parse PayPal checkout Edge Function error response', {
+        status: error.context.status,
+        message: parseError instanceof Error ? parseError.message : 'Invalid JSON response',
+      })
+      return fallback
+    }
+  }
+
+  if (error instanceof Error) {
+    console.error('PayPal checkout request failed', { name: error.name, message: error.message })
+  } else {
+    console.error('PayPal checkout request failed with a non-Error value')
+  }
+  return getErrorMessage(error, fallback)
 }
 
 type AnalystApp = 'chart' | 'sec' | 'insider' | 'ratings' | 'news' | 'analysis'
@@ -164,6 +184,7 @@ type GlobalAnalysisFreshness = {
 type PayPalCheckoutConfig = {
   clientId: string
   planId: string
+  subscriptionId?: string
 }
 
 function isGlobalTickerAnalysis(value: unknown): value is GlobalTickerAnalysis {
@@ -552,23 +573,26 @@ export function AnalystExperienceDisplay({
     try {
       const { data: response, error: invokeError } = await supabase.functions.invoke<{
         success: boolean
-        data?: { approval_url?: unknown; client_id?: unknown; plan_id?: unknown }
+        data?: { client_id?: unknown; plan_id?: unknown; subscription_id?: unknown }
       }>('create-checkout', { body: {} })
       if (invokeError) throw invokeError
-      const checkoutUrl = response?.success ? getPayPalCheckoutUrl(response.data?.approval_url) : null
-      if (checkoutUrl) {
-        window.location.assign(checkoutUrl.toString())
-        return
-      }
       const clientId = response?.data?.client_id
       const planId = response?.data?.plan_id
       if (!response?.success || typeof clientId !== 'string' || !clientId || typeof planId !== 'string' || !planId) {
         throw new Error('The payment provider returned an invalid checkout configuration.')
       }
-      setCheckoutConfig({ clientId, planId })
+      const subscriptionId = response.data?.subscription_id
+      if (subscriptionId !== undefined && (typeof subscriptionId !== 'string' || !subscriptionId)) {
+        throw new Error('The payment provider returned an invalid pending subscription.')
+      }
+      setCheckoutConfig({
+        clientId,
+        planId,
+        ...(typeof subscriptionId === 'string' ? { subscriptionId } : {}),
+      })
       setCheckoutBusy(false)
     } catch (error) {
-      setCheckoutError(getErrorMessage(error, 'Unable to start checkout. Please try again.'))
+      setCheckoutError(await getCheckoutErrorMessage(error, 'Unable to start checkout. Please try again.'))
       setCheckoutBusy(false)
     }
   }
@@ -582,27 +606,34 @@ export function AnalystExperienceDisplay({
     }
     setCheckoutBusy(true)
     setCheckoutError(null)
-    const subscriptionId = await actions.subscription.create({
-      plan_id: checkoutConfig.planId,
-      custom_id: session.user.id,
-      application_context: {
-        brand_name: 'Norvexai',
-        locale: 'en-US',
-        shipping_preference: 'NO_SHIPPING',
-        user_action: 'SUBSCRIBE_NOW',
-        return_url: new URL('/checkout/success', window.location.origin).toString(),
-        cancel_url: new URL('/checkout/failure', window.location.origin).toString(),
-      },
-    })
-    const { data: response, error: invokeError } = await supabase.functions.invoke<{
-      success: boolean
-      error?: { message?: string }
-    }>('create-checkout', { body: { subscription_id: subscriptionId } })
-    if (invokeError) throw invokeError
-    if (!response?.success) {
-      throw new Error(response?.error?.message ?? 'Unable to record the PayPal subscription.')
+    try {
+      const subscriptionId = checkoutConfig.subscriptionId ?? await actions.subscription.create({
+        plan_id: checkoutConfig.planId,
+        custom_id: session.user.id,
+        application_context: {
+          brand_name: 'Norvexai',
+          locale: 'en-US',
+          shipping_preference: 'NO_SHIPPING',
+          user_action: 'SUBSCRIBE_NOW',
+          return_url: new URL('/checkout/success', window.location.origin).toString(),
+          cancel_url: new URL('/checkout/failure', window.location.origin).toString(),
+        },
+      })
+      const { data: response, error: invokeError } = await supabase.functions.invoke<{
+        success: boolean
+        error?: { message?: string }
+      }>('create-checkout', { body: { subscription_id: subscriptionId } })
+      if (invokeError) throw invokeError
+      if (!response?.success) {
+        throw new Error(response?.error?.message ?? 'Unable to record the PayPal subscription.')
+      }
+      return subscriptionId
+    } catch (error) {
+      const message = await getCheckoutErrorMessage(error, 'Unable to prepare the PayPal subscription. Please try again.')
+      setCheckoutError(message)
+      setCheckoutBusy(false)
+      throw new Error(message)
     }
-    return subscriptionId
   }
 
   function handleWatchlistSubmit(event: FormEvent<HTMLFormElement>) {

@@ -63,27 +63,6 @@ function isMonthlyProPlan(plan: PayPalPlan): boolean {
     price === 6.9;
 }
 
-function getApprovalUrl(subscription: PayPalSubscription): string | null {
-  const approvalUrl = subscription.links?.find((link) =>
-    link.rel === "approve"
-  )?.href;
-  if (typeof approvalUrl !== "string") return null;
-
-  try {
-    const parsedUrl = new URL(approvalUrl);
-    const hostname = parsedUrl.hostname.toLowerCase();
-    if (
-      parsedUrl.protocol === "https:" &&
-      (hostname === "paypal.com" || hostname.endsWith(".paypal.com"))
-    ) {
-      return approvalUrl;
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
 Deno.serve(async (request) => {
   const options = handleOptions(request);
   if (options) return options;
@@ -370,6 +349,7 @@ Deno.serve(async (request) => {
 
         const subscription = await subscriptionResponse.json() as PayPalSubscription;
         if (
+          subscription.id !== existingSubscription.paypal_subscription_id ||
           subscription.custom_id !== user.id ||
           subscription.plan_id !== existingSubscription.paypal_plan_id ||
           subscription.plan_id !== planId
@@ -386,8 +366,11 @@ Deno.serve(async (request) => {
         }
 
         if (subscription.status === "APPROVAL_PENDING") {
-          const approvalUrl = getApprovalUrl(subscription);
-          if (approvalUrl) return ok({ approval_url: approvalUrl }, request);
+          return ok({
+            client_id: clientId,
+            plan_id: planId,
+            subscription_id: existingSubscription.paypal_subscription_id,
+          }, request);
         }
 
         console.error(JSON.stringify({
