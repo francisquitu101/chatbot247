@@ -573,7 +573,7 @@ export function AnalystExperienceDisplay({
     try {
       const { data: response, error: invokeError } = await supabase.functions.invoke<{
         success: boolean
-        data?: { client_id?: unknown; plan_id?: unknown; subscription_id?: unknown }
+        data?: { client_id?: unknown; plan_id?: unknown; id?: unknown }
       }>('create-checkout', { body: {} })
       if (invokeError) throw invokeError
       const clientId = response?.data?.client_id
@@ -581,7 +581,7 @@ export function AnalystExperienceDisplay({
       if (!response?.success || typeof clientId !== 'string' || !clientId || typeof planId !== 'string' || !planId) {
         throw new Error('The payment provider returned an invalid checkout configuration.')
       }
-      const subscriptionId = response.data?.subscription_id
+      const subscriptionId = response.data?.id
       if (subscriptionId !== undefined && (typeof subscriptionId !== 'string' || !subscriptionId)) {
         throw new Error('The payment provider returned an invalid pending subscription.')
       }
@@ -621,13 +621,14 @@ export function AnalystExperienceDisplay({
       })
       const { data: response, error: invokeError } = await supabase.functions.invoke<{
         success: boolean
+        data?: { id?: unknown }
         error?: { message?: string }
       }>('create-checkout', { body: { subscription_id: subscriptionId } })
       if (invokeError) throw invokeError
-      if (!response?.success) {
+      if (!response?.success || typeof response.data?.id !== 'string' || response.data.id !== subscriptionId) {
         throw new Error(response?.error?.message ?? 'Unable to record the PayPal subscription.')
       }
-      return subscriptionId
+      return response.data.id
     } catch (error) {
       const message = await getCheckoutErrorMessage(error, 'Unable to prepare the PayPal subscription. Please try again.')
       setCheckoutError(message)

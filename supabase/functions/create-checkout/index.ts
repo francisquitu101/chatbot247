@@ -22,7 +22,6 @@ type PayPalSubscription = {
   status?: unknown;
   plan_id?: unknown;
   custom_id?: unknown;
-  links?: Array<{ href?: unknown; rel?: unknown }>;
 };
 
 type PayPalPlan = {
@@ -114,7 +113,7 @@ Deno.serve(async (request) => {
           recordedSubscription.paypal_plan_id === planId
         ) {
           return ok({
-            subscription_id: subscriptionId,
+            id: subscriptionId,
             status: recordedSubscription.status,
           }, request);
         }
@@ -212,7 +211,7 @@ Deno.serve(async (request) => {
           racedSubscription.paypal_plan_id === planId
         ) {
           return ok({
-            subscription_id: subscriptionId,
+            id: subscriptionId,
             status: racedSubscription.status,
           }, request);
         }
@@ -270,7 +269,7 @@ Deno.serve(async (request) => {
       }
 
       return ok({
-        subscription_id: subscriptionId,
+        id: subscriptionId,
         status: subscription.status === "ACTIVE" ? "active" : "approval_pending",
       }, request);
     }
@@ -296,64 +295,7 @@ Deno.serve(async (request) => {
     }
     if (existingSubscription) {
       if (existingSubscription.status === "approval_pending") {
-        const accessToken = await getPayPalAccessToken();
-        const controller = new AbortController();
-        const timeout = setTimeout(
-          () => controller.abort(),
-          PAYPAL_TIMEOUT_MS,
-        );
-        let subscriptionResponse: Response;
-        try {
-          subscriptionResponse = await fetch(
-            `${apiUrl}/v1/billing/subscriptions/${
-              encodeURIComponent(existingSubscription.paypal_subscription_id)
-            }`,
-            {
-              headers: { Authorization: "Bearer " + accessToken },
-              signal: controller.signal,
-            },
-          );
-        } catch (error) {
-          const code = error instanceof DOMException &&
-              error.name === "AbortError"
-            ? "PAYPAL_TIMEOUT"
-            : error instanceof Error
-            ? error.message
-            : "PAYPAL_UNAVAILABLE";
-          console.error(JSON.stringify({
-            event: "paypal_pending_subscription_lookup_failed",
-            code,
-          }));
-          return errorResponse(
-            "CHECKOUT_PROVIDER_ERROR",
-            "Unable to resume your pending PayPal approval. Please try again.",
-            502,
-            request,
-          );
-        } finally {
-          clearTimeout(timeout);
-        }
-
-        if (!subscriptionResponse.ok) {
-          console.error(JSON.stringify({
-            event: "paypal_pending_subscription_lookup_failed",
-            status: subscriptionResponse.status,
-          }));
-          return errorResponse(
-            "CHECKOUT_PROVIDER_ERROR",
-            "Unable to resume your pending PayPal approval. Please try again.",
-            502,
-            request,
-          );
-        }
-
-        const subscription = await subscriptionResponse.json() as PayPalSubscription;
-        if (
-          subscription.id !== existingSubscription.paypal_subscription_id ||
-          subscription.custom_id !== user.id ||
-          subscription.plan_id !== existingSubscription.paypal_plan_id ||
-          subscription.plan_id !== planId
-        ) {
+        if (existingSubscription.paypal_plan_id !== planId) {
           console.error(JSON.stringify({
             event: "paypal_pending_subscription_ownership_mismatch",
           }));
@@ -364,25 +306,11 @@ Deno.serve(async (request) => {
             request,
           );
         }
-
-        if (subscription.status === "APPROVAL_PENDING") {
-          return ok({
-            client_id: clientId,
-            plan_id: planId,
-            subscription_id: existingSubscription.paypal_subscription_id,
-          }, request);
-        }
-
-        console.error(JSON.stringify({
-          event: "paypal_pending_subscription_not_resumable",
-          status: subscription.status ?? "UNKNOWN",
-        }));
-        return errorResponse(
-          "SUBSCRIPTION_EXISTS",
-          "A PayPal subscription is already in progress or has changed status. Check your PayPal account before starting another checkout.",
-          409,
-          request,
-        );
+        return ok({
+          client_id: clientId,
+          plan_id: planId,
+          id: existingSubscription.paypal_subscription_id,
+        }, request);
       }
 
       return errorResponse(
