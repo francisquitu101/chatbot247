@@ -1,6 +1,7 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ComponentType, type FormEvent } from 'react'
 import { FunctionsHttpError, type Session } from '@supabase/supabase-js'
-import { ArrowRight, Brain, ChartColumnIncreasing, Chrome, Crown, ExternalLink, FileText, FolderOpen, LogOut, Newspaper, Plus, RefreshCw, Star, TrendingUp } from 'lucide-react'
+import { ArrowRight, Brain, ChartColumnIncreasing, Chrome, Crown, ExternalLink, FileText, FolderOpen, LogOut, Newspaper, Plus, RefreshCw, Sparkles, Star, TrendingUp } from 'lucide-react'
+import type { Props as RndProps } from 'react-rnd'
 import { Navbar } from '../components/Navbar'
 import type { PayPalSubscriptionButtonProps } from '../components/PayPalSubscriptionButtons'
 import { PriceChart, type PriceChartCandle } from '../components/PriceChart'
@@ -15,6 +16,7 @@ import type { FinvizAnalystRating, FinvizInsiderTrade } from '../types'
 const DEMO_PATTERNS = [/\[DEMO SEEDED\]/i, /demo_seed/i, /synthetic_test/i, /demo seed/i, /synthetic/i, /development test/i]
 const FREE_WATCHLIST_LIMIT = 3
 const PRO_WATCHLIST_LIMIT = 10
+const ReactRnd = lazy<ComponentType<RndProps>>(() => import('react-rnd').then((module) => ({ default: module.Rnd })))
 const PayPalSubscriptionButtons = lazy(() => import('../components/PayPalSubscriptionButtons').then((module) => ({
   default: module.PayPalSubscriptionButtons,
 })))
@@ -145,7 +147,27 @@ async function getCheckoutErrorMessage(error: unknown, fallback: string): Promis
   return getErrorMessage(error, fallback)
 }
 
-type AnalystApp = 'chart' | 'sec' | 'insider' | 'ratings' | 'news' | 'analysis'
+type AnalystApp = 'chart' | 'sec' | 'insider' | 'ratings' | 'news' | 'analysis' | 'pricing' | 'terminal'
+type DesktopWindowId = AnalystApp
+type DesktopGeometry = { x: number; y: number; width: number; height: number }
+type DesktopWindow = DesktopGeometry & {
+  id: DesktopWindowId
+  isMinimized: boolean
+  isMaximized: boolean
+  restoreGeometry: DesktopGeometry | null
+  zIndex: number
+}
+
+const DESKTOP_WINDOW_TITLES: Record<DesktopWindowId, string> = {
+  chart: 'Price Chart',
+  sec: 'SEC Filings',
+  insider: 'Insider Tracker',
+  ratings: 'Analyst Ratings',
+  news: 'Market News',
+  analysis: 'Analysis',
+  pricing: 'Pricing',
+  terminal: 'Norvexai Terminal',
+}
 
 type TickerExtractionState = {
   status: 'running' | 'complete' | 'error'
@@ -159,7 +181,7 @@ type TerminalTrackerState = {
   error: string | null
 }
 
-const EMPTY_STATE_COPY: Record<Exclude<AnalystApp, 'chart'>, string> = {
+const EMPTY_STATE_COPY: Record<Exclude<AnalystApp, 'chart' | 'pricing' | 'terminal'>, string> = {
   sec: 'No SEC filings available for',
   insider: 'No insider trading records found for',
   ratings: 'No recent analyst ratings for',
@@ -168,6 +190,160 @@ const EMPTY_STATE_COPY: Record<Exclude<AnalystApp, 'chart'>, string> = {
 }
 
 const EMPTY_STATE_DESCRIPTION = 'No records are currently available for this source and ticker.'
+const PRO_BANNER_MESSAGES = [
+  'Eres parte de la élite de Norvexai',
+  'Gracias por confiar en nosotros',
+  'Descubriendo el futuro con acceso Pro',
+]
+
+type DesktopPosition = { x: number; y: number }
+
+const DESKTOP_LAYOUT_KEY = 'norvexai-desktop-layout-v1'
+
+function readDesktopPositions(): Record<string, DesktopPosition> {
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(DESKTOP_LAYOUT_KEY) ?? 'null')
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return {}
+    return Object.fromEntries(
+      Object.entries(saved).filter((entry): entry is [string, DesktopPosition] => {
+        const position = entry[1]
+        return !!position &&
+          typeof position === 'object' &&
+          'x' in position &&
+          'y' in position &&
+          typeof position.x === 'number' &&
+          Number.isFinite(position.x) &&
+          Math.abs(position.x) <= 4000 &&
+          typeof position.y === 'number' &&
+          Number.isFinite(position.y) &&
+          Math.abs(position.y) <= 4000
+      }),
+    )
+  } catch (storageError) {
+    console.warn('[desktop] Could not load saved icon positions:', storageError)
+    return {}
+  }
+}
+
+function createDesktopWindow(id: DesktopWindowId, zIndex: number): DesktopWindow {
+  const viewportWidth = typeof window === 'undefined' ? 1280 : window.innerWidth
+  const viewportHeight = typeof window === 'undefined' ? 800 : window.innerHeight
+  const isMobile = viewportWidth <= 620
+  const width = id === 'terminal'
+    ? Math.min(isMobile ? viewportWidth - 24 : 390, isMobile ? viewportWidth - 24 : viewportWidth * 0.34)
+    : Math.min(isMobile ? viewportWidth - 24 : 720, isMobile ? viewportWidth - 24 : viewportWidth * 0.62)
+  const height = id === 'terminal'
+    ? Math.min(isMobile ? 220 : 340, viewportHeight - (isMobile ? 260 : 150))
+    : Math.min(isMobile ? viewportHeight - 340 : 680, viewportHeight - (isMobile ? 340 : 150))
+  const stagger = Math.max(0, zIndex - 2) % 4
+  return {
+    id,
+    x: isMobile
+      ? 12
+      : id === 'terminal'
+        ? Math.max(120, viewportWidth - width - 64)
+        : Math.max(220, (viewportWidth - width) / 2 + stagger * 42),
+    y: isMobile
+      ? 138 + (id === 'terminal' ? 48 : stagger * 24)
+      : id === 'terminal'
+        ? 160
+        : Math.max(100, (viewportHeight - height) / 2 + stagger * 36),
+    width: Math.max(280, width),
+    height: Math.max(id === 'terminal' ? 200 : isMobile ? 280 : 340, height),
+    isMinimized: false,
+    isMaximized: false,
+    restoreGeometry: null,
+    zIndex,
+  }
+}
+
+function ProBanner() {
+  const [messageIndex, setMessageIndex] = useState(0)
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setMessageIndex((current) => (current + 1) % PRO_BANNER_MESSAGES.length)
+    }, 7000)
+    return () => window.clearInterval(intervalId)
+  }, [])
+
+  return (
+    <div className="norvexai-pro-banner" role="status" aria-live="polite">
+      <Sparkles size={15} aria-hidden="true" />
+      <span>{PRO_BANNER_MESSAGES[messageIndex]}</span>
+      <span className="norvexai-pro-banner-label">PRO</span>
+    </div>
+  )
+}
+
+function PricingView({
+  isPro,
+  session,
+  onUpgrade,
+  checkoutBusy,
+}: {
+  isPro: boolean
+  session: Session | null | undefined
+  onUpgrade: () => void
+  checkoutBusy: boolean
+}) {
+  return (
+    <main className="luna-pricing-view">
+      <header className="luna-pricing-heading">
+        <span className="luna-report-eyebrow">NORVEXAI PLANS</span>
+        <h2>Choose the watchlist that fits your research</h2>
+        <p>Both plans include the same market data workspace. Pro expands your saved watchlist.</p>
+      </header>
+      <div className="luna-pricing-table-wrap">
+        <table className="luna-pricing-table">
+          <thead>
+            <tr>
+              <th scope="col">Included</th>
+              <th scope="col">Basic</th>
+              <th scope="col" className="pro-column">Pro</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Price</th>
+              <td>Free</td>
+              <td className="pro-column">US$6.90/month</td>
+            </tr>
+            <tr>
+              <th scope="row">Saved tickers</th>
+              <td>Up to 3</td>
+              <td className="pro-column">Up to 10</td>
+            </tr>
+            <tr>
+              <th scope="row">Market data</th>
+              <td>Charts, SEC filings, insider trades, analyst ratings and news</td>
+              <td className="pro-column">Charts, SEC filings, insider trades, analyst ratings and news</td>
+            </tr>
+            <tr>
+              <th scope="row">Research tools</th>
+              <td>Technical analysis and research reports available when signed in</td>
+              <td className="pro-column">Technical analysis and research reports available when signed in</td>
+            </tr>
+            <tr>
+              <th scope="row">Export</th>
+              <td>Print or save available research reports as PDF</td>
+              <td className="pro-column">Print or save available research reports as PDF</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div className="luna-pricing-footer">
+        <span>{isPro ? 'Your Pro subscription is active.' : 'Upgrade securely with PayPal.'}</span>
+        {!isPro && (
+          <button type="button" onClick={onUpgrade} disabled={checkoutBusy}>
+            <Crown size={15} aria-hidden="true" />
+            {checkoutBusy ? 'Preparing checkout…' : session ? 'Upgrade to Pro · US$6.90/mo' : 'Sign in to upgrade'}
+          </button>
+        )}
+      </div>
+    </main>
+  )
+}
 
 type NewsBriefing =
   | { status: 'loading' }
@@ -353,6 +529,13 @@ export function AnalystExperienceDisplay({
   const globalAnalysisRestoreSequenceRef = useRef(0)
   const [chartHistory, setChartHistory] = useState<{ ticker: string; candles: PriceChartCandle[] }>({ ticker: '', candles: [] })
   const [activeApp, setActiveApp] = useState<AnalystApp>('sec')
+  const [openWindows, setOpenWindows] = useState<DesktopWindow[]>([
+    createDesktopWindow('sec', 2),
+    createDesktopWindow('terminal', 1),
+  ])
+  const [desktopPositions, setDesktopPositions] = useState<Record<string, DesktopPosition>>(readDesktopPositions)
+  const desktopPositionsRef = useRef(desktopPositions)
+  const desktopShellRef = useRef<HTMLDivElement>(null)
   const [briefingArticleId, setBriefingArticleId] = useState<string | null>(null)
   const [newsBriefings, setNewsBriefings] = useState<Record<string, NewsBriefing>>({})
   const [data, setData] = useState<Awaited<ReturnType<typeof getPublicAnalystByTicker>> | null>(null)
@@ -388,6 +571,86 @@ export function AnalystExperienceDisplay({
   activeTickerRef.current = activeTicker
   const sessionUserId = session?.user.id ?? null
   const watchlistStorageKey = sessionUserId ? `marketmole-watchlist:${sessionUserId}` : 'marketmole-watchlist:guest'
+
+  function openDesktopWindow(id: DesktopWindowId) {
+    if (id !== 'terminal') setActiveApp(id)
+    setOpenWindows((current) => {
+      const nextZIndex = Math.max(0, ...current.map((item) => item.zIndex)) + 1
+      const existing = current.find((item) => item.id === id)
+      if (existing) {
+        return current.map((item) => item.id === id
+          ? { ...item, isMinimized: false, zIndex: nextZIndex }
+          : item)
+      }
+      return [...current, createDesktopWindow(id, nextZIndex)]
+    })
+  }
+
+  function focusDesktopWindow(id: DesktopWindowId) {
+    setOpenWindows((current) => {
+      const nextZIndex = Math.max(0, ...current.map((item) => item.zIndex)) + 1
+      return current.map((item) => item.id === id ? { ...item, zIndex: nextZIndex } : item)
+    })
+    if (id !== 'terminal') setActiveApp(id)
+  }
+
+  function closeDesktopWindow(id: DesktopWindowId) {
+    const remaining = openWindows.filter((item) => item.id !== id)
+    setOpenWindows(remaining)
+    if (activeApp === id) {
+      const nextWindow = remaining.filter((item) => !item.isMinimized)
+        .sort((left, right) => right.zIndex - left.zIndex)[0]
+      setActiveApp(nextWindow?.id ?? 'sec')
+    }
+  }
+
+  function minimizeDesktopWindow(id: DesktopWindowId) {
+    const nextWindows = openWindows.map((item) => item.id === id ? { ...item, isMinimized: true } : item)
+    setOpenWindows(nextWindows)
+    if (activeApp === id) {
+      const nextWindow = nextWindows.filter((item) => !item.isMinimized)
+        .sort((left, right) => right.zIndex - left.zIndex)[0]
+      if (nextWindow && nextWindow.id !== 'terminal') setActiveApp(nextWindow.id)
+    }
+  }
+
+  function toggleDesktopMaximize(id: DesktopWindowId) {
+    const bounds = desktopShellRef.current?.getBoundingClientRect()
+    if (!bounds) return
+    const margin = window.innerWidth <= 620 ? 12 : 116
+    setOpenWindows((current) => current.map((item) => {
+      if (item.id !== id) return item
+      if (item.isMaximized && item.restoreGeometry) {
+        return { ...item, ...item.restoreGeometry, isMaximized: false, restoreGeometry: null }
+      }
+      const restoreGeometry = { x: item.x, y: item.y, width: item.width, height: item.height }
+      return {
+        ...item,
+        x: window.innerWidth <= 620 ? 12 : 104,
+        y: window.innerWidth <= 620 ? 110 : 86,
+        width: Math.max(280, bounds.width - margin * 2),
+        height: Math.max(300, bounds.height - (window.innerWidth <= 620 ? 220 : 120)),
+        isMaximized: true,
+        restoreGeometry,
+      }
+    }))
+  }
+
+  function saveDesktopPositions(nextPositions: Record<string, DesktopPosition>) {
+    desktopPositionsRef.current = nextPositions
+    setDesktopPositions(nextPositions)
+    void Promise.resolve().then(() => {
+      try {
+        localStorage.setItem(DESKTOP_LAYOUT_KEY, JSON.stringify(nextPositions))
+      } catch (storageError) {
+        console.warn('[desktop] Could not save icon positions:', storageError)
+      }
+    })
+  }
+
+  function updateDesktopWindow(id: DesktopWindowId, geometry: Partial<DesktopGeometry>) {
+    setOpenWindows((current) => current.map((item) => item.id === id ? { ...item, ...geometry } : item))
+  }
 
   useEffect(() => () => {
     Object.values(tickerScanTimeoutsRef.current).flat().forEach((timeoutId) => window.clearTimeout(timeoutId))
@@ -1324,6 +1587,8 @@ export function AnalystExperienceDisplay({
     { id: 'ratings' as const, label: 'Analyst Ratings', Icon: Star },
     { id: 'news' as const, label: 'Market News', Icon: Newspaper },
     { id: 'analysis' as const, label: 'Analysis', Icon: FolderOpen },
+    { id: 'pricing' as const, label: 'Pricing', Icon: FolderOpen },
+    { id: 'terminal' as const, label: 'Norvexai Terminal', Icon: Sparkles },
   ]
 
   const secFiles = [
@@ -1347,24 +1612,15 @@ export function AnalystExperienceDisplay({
   const chartWorkspace = (
     <div className="luna-chart-workspace">
       <PriceChart
-        key={activeTicker}
+        key={`price-chart-${activeTicker}`}
         ticker={activeTicker}
         insiderTrades={currentInsiderTrades}
         ratings={currentRatings}
         onCandlesChange={handleChartCandlesChange}
       />
-      <TechnicalCopilotPanel key={activeTicker} ticker={activeTicker} candles={currentChartCandles} authenticated={Boolean(session)} />
+      <TechnicalCopilotPanel key={`technical-copilot-${activeTicker}`} ticker={activeTicker} candles={currentChartCandles} authenticated={Boolean(session)} />
     </div>
   )
-  const activeTitle = {
-    chart: 'Price Chart',
-    sec: 'SEC Filings',
-    insider: 'Insider Tracker',
-    ratings: 'Analyst Ratings',
-    news: 'Market News',
-    analysis: 'Analysis',
-  }[activeApp]
-
   useEffect(() => {
     const feed = document.querySelector('.luna-chat-feed') as HTMLElement | null
     if (feed) {
@@ -1432,13 +1688,34 @@ export function AnalystExperienceDisplay({
     </section>
   )
 
-  const terminalWindow = (
+  const terminalState = openWindows.find((item) => item.id === 'terminal')
+  const terminalWindow = terminalState ? (
+    <ReactRnd
+      key={`terminal-${terminalState.isMaximized}`}
+      bounds=".luna-chat-shell"
+      default={{ x: terminalState.x, y: terminalState.y, width: terminalState.width, height: terminalState.height }}
+      minWidth={280}
+      minHeight={200}
+      style={{ zIndex: terminalState.zIndex, display: terminalState.isMinimized ? 'none' : undefined }}
+      dragHandleClassName="luna-terminal-titlebar"
+      cancel=".luna-window-controls, button, a, input"
+      disableDragging={terminalState.isMaximized}
+      enableResizing={!terminalState.isMaximized}
+      onMouseDown={() => focusDesktopWindow('terminal')}
+      onDragStop={(_, position) => updateDesktopWindow('terminal', { x: position.x, y: position.y })}
+      onResizeStop={(_, __, element, ___, position) => updateDesktopWindow('terminal', {
+        x: position.x,
+        y: position.y,
+        width: element.offsetWidth,
+        height: element.offsetHeight,
+      })}
+    >
     <aside className="luna-window luna-terminal-window" aria-label="Norvexai Terminal" aria-busy={loading}>
       <div className="luna-titlebar luna-terminal-titlebar">
-        <div className="luna-window-controls" aria-hidden="true">
-          <span className="luna-window-control close" />
-          <span className="luna-window-control minimize" />
-          <span className="luna-window-control maximize" />
+        <div className="luna-window-controls">
+          <button type="button" className="luna-window-control close" aria-label="Close Terminal" onClick={() => closeDesktopWindow('terminal')} />
+          <button type="button" className="luna-window-control minimize" aria-label="Minimize Terminal" onClick={() => minimizeDesktopWindow('terminal')} />
+          <button type="button" className="luna-window-control maximize" aria-label={terminalState.isMaximized ? 'Restore Terminal' : 'Maximize Terminal'} onClick={() => toggleDesktopMaximize('terminal')} />
         </div>
         <span className="luna-titlebar-label">Norvexai Terminal</span>
         <span className="luna-titlebar-spacer" aria-hidden="true" />
@@ -1493,84 +1770,111 @@ export function AnalystExperienceDisplay({
         <div className="luna-terminal-cursor" aria-hidden="true" />
       </div>
     </aside>
-  )
-
-  if (loadedTicker !== activeTicker) {
-    return (
-      <div className="luna-chat-shell">
-        <Navbar>{watchlistPanel}</Navbar>
-        <div className="luna-desktop-icons" aria-label="Data sources">
-          {desktopSources.map(({ id, label, Icon }) => (
-            <button
-              key={id}
-              type="button"
-              className={`luna-desktop-icon ${activeApp === id ? 'selected' : ''}`}
-              onClick={() => setActiveApp(id)}
-              aria-pressed={activeApp === id}
-            >
-              <span className="luna-desktop-icon-art"><Icon size={25} strokeWidth={1.7} /></span>
-              <span>{label}</span>
-            </button>
-          ))}
-        </div>
-        <div className={`luna-desktop-windows ${activeApp === 'chart' ? 'luna-chart-focused' : ''}`}>
-          <section className="luna-window luna-analysis-window" aria-label={`${activeTitle} · ${activeTicker}`}>
-            <div className="luna-titlebar">
-              <div className="luna-window-controls" aria-hidden="true">
-                <span className="luna-window-control close" />
-                <span className="luna-window-control minimize" />
-                <span className="luna-window-control maximize" />
-              </div>
-              <span className="luna-titlebar-label">{activeTitle}</span>
-              <span className="luna-titlebar-spacer" aria-hidden="true" />
-            </div>
-            {activeApp === 'chart' ? (
-              <main className="luna-data-view luna-chart-view" aria-label={`${activeTicker} price chart`}>
-                {chartWorkspace}
-              </main>
-            ) : (
-              <main className="luna-data-view luna-sec-explorer">
-                {showTickerDataLoader ? (
-                  <DataLoadingState ticker={activeTicker} />
-                ) : (
-                  <DataEmptyState ticker={activeTicker} emptyMessage={EMPTY_STATE_COPY[activeApp]} errorMessage={activeApp === 'analysis' ? error : null} />
-                )}
-              </main>
-            )}
-          </section>
-          {terminalWindow}
-        </div>
-      </div>
-    )
-  }
+    </ReactRnd>
+  ) : null
 
   return (
-    <div className="luna-chat-shell">
+    <div
+      ref={desktopShellRef}
+      className={`luna-chat-shell${isPro === true ? ' has-pro' : ''}`}
+    >
       <Navbar>{watchlistPanel}</Navbar>
-      <div className="luna-desktop-icons" aria-label="Fuentes de datos">
-        {desktopSources.map(({ id, label, Icon }) => (
-          <button
-            key={id}
-            type="button"
-            className={`luna-desktop-icon ${activeApp === id ? 'selected' : ''}`}
-            onClick={() => setActiveApp(id)}
-            aria-pressed={activeApp === id}
-          >
-            <span className="luna-desktop-icon-art"><Icon size={25} strokeWidth={1.7} /></span>
-            <span>{label}</span>
-          </button>
-        ))}
+      {isPro === true && <ProBanner />}
+      <div
+        className="luna-desktop-icons"
+        aria-label="Fuentes de datos"
+        style={window.innerWidth <= 620
+          ? { height: `${Math.ceil(desktopSources.length / Math.max(1, Math.floor((window.innerWidth - 20) / 100))) * 70}px` }
+          : undefined}
+      >
+        <Suspense fallback={null}>
+        {desktopSources.map(({ id, label, Icon }, index) => {
+          const key = `icon-${id}`
+          const mobileLayout = window.innerWidth <= 620
+          const mobileColumns = Math.max(1, Math.floor((window.innerWidth - 20) / 100))
+          const iconHeight = mobileLayout ? 68 : 78
+          const defaultPosition = desktopPositions[key] ?? {
+            x: mobileLayout ? (index % mobileColumns) * 100 : index < 4 ? 0 : 104,
+            y: mobileLayout ? Math.floor(index / mobileColumns) * 70 : (index % 4) * 88,
+          }
+          const maxX = Math.max(0, window.innerWidth - (mobileLayout ? 20 : 36) - 96)
+          const maxY = mobileLayout
+            ? Math.max(0, Math.ceil(desktopSources.length / mobileColumns) * 70 - iconHeight)
+            : Math.max(0, window.innerHeight - 96 - 20 - iconHeight)
+          const position = {
+            x: Math.min(maxX, Math.max(0, defaultPosition.x)),
+            y: Math.min(maxY, Math.max(0, defaultPosition.y)),
+          }
+          return (
+            <ReactRnd
+              key={id}
+              className="luna-desktop-icon-rnd"
+              bounds="parent"
+              default={{ ...position, width: 96, height: iconHeight }}
+              minWidth={96}
+              minHeight={iconHeight}
+              maxWidth={96}
+              maxHeight={iconHeight}
+              enableResizing={false}
+              onDragStop={(_, finalPosition) => {
+                saveDesktopPositions({
+                  ...desktopPositionsRef.current,
+                  [key]: { x: finalPosition.x, y: finalPosition.y },
+                })
+              }}
+            >
+              <button
+                type="button"
+                className={`luna-desktop-icon ${id === 'pricing' ? 'luna-pricing-icon' : ''} ${activeApp === id ? 'selected' : ''}`}
+                onClick={() => openDesktopWindow(id)}
+                aria-pressed={activeApp === id}
+              >
+                <span className="luna-desktop-icon-art"><Icon size={25} strokeWidth={1.7} /></span>
+                <span>{label}</span>
+              </button>
+            </ReactRnd>
+          )
+        })}
+        </Suspense>
       </div>
 
-      <div className={`luna-desktop-windows ${activeApp === 'chart' ? 'luna-chart-focused' : ''}`}>
-      <div className="luna-window luna-analysis-window">
+      <div className="luna-desktop-windows">
+        <Suspense fallback={null}>
+        {openWindows
+          .filter((item): item is DesktopWindow & { id: Exclude<DesktopWindowId, 'terminal'> } => item.id !== 'terminal')
+          .map((windowState) => {
+            const app = windowState.id
+            const title = DESKTOP_WINDOW_TITLES[app]
+            return (
+        <ReactRnd
+          key={`${app}-${windowState.isMaximized}`}
+          className={`luna-desktop-window-rnd luna-desktop-window-${app}`}
+          bounds=".luna-chat-shell"
+          default={{ x: windowState.x, y: windowState.y, width: windowState.width, height: windowState.height }}
+          minWidth={280}
+          minHeight={window.innerWidth <= 620 ? 280 : 340}
+          style={{ zIndex: windowState.zIndex, display: windowState.isMinimized ? 'none' : undefined }}
+          dragHandleClassName="luna-titlebar"
+          cancel=".luna-window-controls, button, a, input"
+          disableDragging={windowState.isMaximized}
+          enableResizing={!windowState.isMaximized}
+          onMouseDown={() => focusDesktopWindow(app)}
+          onDragStop={(_, position) => updateDesktopWindow(app, { x: position.x, y: position.y })}
+          onResizeStop={(_, __, element, ___, position) => updateDesktopWindow(app, {
+            x: position.x,
+            y: position.y,
+            width: element.offsetWidth,
+            height: element.offsetHeight,
+          })}
+        >
+        <div className={`luna-window luna-analysis-window${windowState.isMaximized ? ' is-maximized' : ''}`}>
         <div className="luna-titlebar" aria-label="Norvexai application window">
-          <div className="luna-window-controls" aria-hidden="true">
-            <span className="luna-window-control close" />
-            <span className="luna-window-control minimize" />
-            <span className="luna-window-control maximize" />
+          <div className="luna-window-controls">
+            <button type="button" className="luna-window-control close" aria-label={`Close ${title}`} onClick={() => closeDesktopWindow(app)} />
+            <button type="button" className="luna-window-control minimize" aria-label={`Minimize ${title}`} onClick={() => minimizeDesktopWindow(app)} />
+            <button type="button" className="luna-window-control maximize" aria-label={windowState.isMaximized ? `Restore ${title}` : `Maximize ${title}`} onClick={() => toggleDesktopMaximize(app)} />
           </div>
-          <span className="luna-titlebar-label">{activeTitle}</span>
+          <span className="luna-titlebar-label">{title}</span>
           <span className="luna-titlebar-spacer" aria-hidden="true" />
         </div>
         <header className="luna-window-header">
@@ -1580,7 +1884,8 @@ export function AnalystExperienceDisplay({
             <span className="luna-mini-ticker">{activeTicker}</span>
           </div>
 
-          <div className="luna-header-actions">
+          {windowState.id === activeApp && (
+            <div className="luna-header-actions">
             {session ? (
               <div className="luna-session-controls">
                 <span className="luna-session-email" title={session.user.email ?? undefined}>{session.user.email}</span>
@@ -1646,18 +1951,28 @@ export function AnalystExperienceDisplay({
                 {statusLabel}
               </div>
             )}
-          </div>
+            </div>
+          )}
         </header>
 
         {authError && <div className="luna-auth-error">{authError}</div>}
 
-        {activeApp === 'chart' && (
+        {app === 'chart' && (
           <main className="luna-data-view luna-chart-view" aria-label={`${activeTicker} price chart`}>
             {chartWorkspace}
           </main>
         )}
 
-        {activeApp === 'sec' && (
+        {app === 'pricing' && (
+          <PricingView
+            isPro={isPro === true}
+            session={session}
+            onUpgrade={handleWatchlistUpgrade}
+            checkoutBusy={checkoutBusy}
+          />
+        )}
+
+        {app === 'sec' && (
           <main className="luna-data-view luna-sec-explorer">
             {showTickerDataLoader || feedLoading.sec ? (
               <DataLoadingState ticker={activeTicker} />
@@ -1691,7 +2006,7 @@ export function AnalystExperienceDisplay({
           </main>
         )}
 
-        {activeApp === 'insider' && (
+        {app === 'insider' && (
           <main className="luna-data-view">
             {showTickerDataLoader || feedLoading.insider ? (
               <DataLoadingState ticker={activeTicker} />
@@ -1743,7 +2058,7 @@ export function AnalystExperienceDisplay({
           </main>
         )}
 
-        {activeApp === 'ratings' && (
+        {app === 'ratings' && (
           <main className="luna-data-view">
             {showTickerDataLoader || feedLoading.ratings ? (
               <DataLoadingState ticker={activeTicker} />
@@ -1778,7 +2093,7 @@ export function AnalystExperienceDisplay({
           </main>
         )}
 
-        {activeApp === 'news' && (
+        {app === 'news' && (
           <main className="luna-news-view" aria-live="polite">
             <div className="luna-news-heading">
               <div>
@@ -1872,7 +2187,7 @@ export function AnalystExperienceDisplay({
           </main>
         )}
 
-        {activeApp === 'analysis' && (
+        {app === 'analysis' && (
           <main className="luna-report-view" aria-live="polite">
             <section className="global-analysis-panel" aria-label={`Global market analysis for ${activeTicker}`}>
               <div className="global-analysis-pdf-brand" aria-hidden="true">
@@ -1930,9 +2245,23 @@ export function AnalystExperienceDisplay({
         )}
 
       </div>
+        </ReactRnd>
+            )
+          })}
 
       {terminalWindow}
+        </Suspense>
       </div>
+
+      {openWindows.some((item) => item.isMinimized) && (
+        <div className="luna-window-dock" aria-label="Minimized windows">
+          {openWindows.filter((item) => item.isMinimized).map((item) => (
+            <button key={item.id} type="button" onClick={() => openDesktopWindow(item.id)}>
+              {DESKTOP_WINDOW_TITLES[item.id]}
+            </button>
+          ))}
+        </div>
+      )}
 
     </div>
   )

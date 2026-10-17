@@ -361,23 +361,57 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   color: #315c80;
 }
 
+.norvexai-pro-banner {
+  position: absolute;
+  z-index: 3;
+  top: 76px;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  max-width: calc(100vw - 32px);
+  padding: 9px 15px;
+  border: 1px solid rgba(157, 210, 255, 0.45);
+  border-radius: 999px;
+  background: rgba(12, 48, 87, 0.86);
+  box-shadow: 0 8px 24px rgba(5, 23, 44, 0.25);
+  color: #e7f4ff;
+  font-size: 11px;
+  font-weight: 600;
+  transform: translateX(-50%);
+  backdrop-filter: blur(12px);
+}
+
+.norvexai-pro-banner-label {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #80c2ff;
+  color: #123c62;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
 .luna-desktop-icons {
   position: absolute;
   z-index: 2;
-  top: 50%;
-  left: 24px;
-  display: grid;
-  gap: 10px;
-  width: 92px;
-  transform: translateY(-50%);
+  inset: 96px 18px 20px;
+  pointer-events: none;
 }
+
+.luna-desktop-icon-rnd,
+.luna-desktop-window-rnd {
+  pointer-events: auto;
+}
+
+.luna-desktop-window-rnd { touch-action: auto; }
 
 .luna-desktop-icon {
   display: grid;
   justify-items: center;
   gap: 7px;
-  width: 100%;
-  padding: 7px 3px;
+  width: 96px;
+  height: 78px;
+  padding: 4px 3px;
   border: 1px solid transparent;
   border-radius: 12px;
   background: transparent;
@@ -387,6 +421,16 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   text-align: center;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
   cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+
+.luna-desktop-icon:active { cursor: grabbing; }
+
+.luna-desktop-icon.luna-pricing-icon .luna-desktop-icon-art {
+  border-color: rgba(160, 210, 255, 0.9);
+  background: linear-gradient(145deg, #b5ddff, #1673c8);
+  color: #073869;
 }
 
 .luna-desktop-icon:hover,
@@ -415,22 +459,19 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
 }
 
 .luna-desktop-windows {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 22px;
-  width: min(100%, 1040px);
-  height: calc(100% - 46px);
-  margin-top: 46px;
-  margin-left: 106px;
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  pointer-events: none;
 }
+
+.luna-desktop-windows > .luna-desktop-window-rnd { pointer-events: auto; }
 
 .luna-window {
   min-width: 0;
-  height: min(80vh, 820px);
-  min-height: min(520px, calc(100vh - 60px));
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: rgba(255, 255, 255, 0.96);
@@ -439,26 +480,87 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   box-shadow: 0 32px 90px rgba(18, 35, 31, 0.16), 0 4px 14px rgba(18, 35, 31, 0.06);
   overflow: hidden;
   backdrop-filter: blur(18px);
+  pointer-events: auto;
 }
+
+.luna-titlebar { cursor: grab; touch-action: none; }
+.luna-titlebar:active { cursor: grabbing; }
+.luna-titlebar button { cursor: pointer; }
+
+.luna-pricing-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: clamp(20px, 4vw, 38px);
+  overflow: auto;
+  background:
+    radial-gradient(circle at 90% 0%, rgba(118, 195, 255, 0.36), transparent 36%),
+    linear-gradient(145deg, #07396f, #0757a4 54%, #0b72c7);
+  color: #f4f9ff;
+}
+
+.luna-pricing-heading { max-width: 660px; margin: 0 auto 24px; text-align: center; }
+.luna-pricing-heading .luna-report-eyebrow { color: #a9d8ff; }
+.luna-pricing-heading h2 { margin: 8px 0; color: #fff; font-size: clamp(20px, 3vw, 28px); }
+.luna-pricing-heading p { margin: 0; color: rgba(235, 245, 255, 0.8); font-size: 12px; line-height: 1.6; }
+
+.luna-pricing-table-wrap {
+  max-width: 720px;
+  margin: 0 auto;
+  overflow-x: auto;
+  border: 1px solid rgba(207, 232, 255, 0.3);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 18px 42px rgba(0, 24, 52, 0.24);
+}
+
+.luna-pricing-table { width: 100%; border-collapse: collapse; color: #263b50; font-size: 12px; text-align: left; }
+.luna-pricing-table th,
+.luna-pricing-table td { min-width: 120px; padding: 13px 15px; border-bottom: 1px solid #e4edf5; vertical-align: top; line-height: 1.5; }
+.luna-pricing-table thead th { background: #edf5fc; color: #36536c; font-size: 10px; letter-spacing: 0.07em; text-transform: uppercase; }
+.luna-pricing-table tbody th { width: 24%; color: #263b50; font-weight: 700; }
+.luna-pricing-table .pro-column { background: #e6f3ff; color: #0757a4; font-weight: 650; }
+.luna-pricing-table thead .pro-column { background: #1476c5; color: #fff; }
+.luna-pricing-table tbody tr:last-child > * { border-bottom: 0; }
+
+.luna-pricing-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 720px;
+  margin: 18px auto 0;
+  color: rgba(235, 245, 255, 0.86);
+  font-size: 11px;
+}
+
+.luna-pricing-footer button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid rgba(221, 239, 255, 0.65);
+  border-radius: 999px;
+  background: #e6f3ff;
+  color: #0757a4;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.luna-pricing-footer button:hover:not(:disabled) { background: #fff; }
+.luna-pricing-footer button:disabled { cursor: wait; opacity: 0.7; }
 
 .luna-analysis-window {
-  width: min(600px, 58%);
-  flex: 0 1 600px;
-}
-
-.luna-desktop-windows.luna-chart-focused .luna-analysis-window {
   width: 100%;
-  flex: 1 1 100%;
-}
-
-.luna-desktop-windows.luna-chart-focused .luna-terminal-window {
-  display: none;
+  flex: 1 1 auto;
 }
 
 .luna-terminal-window {
-  width: min(360px, 36%);
-  flex: 0 1 360px;
-  align-self: center;
+  width: 100%;
+  height: 100%;
+  flex: 1 1 auto;
   min-height: 0;
   background: var(--brand-dark);
   border-color: rgba(173, 208, 188, 0.18);
@@ -561,14 +663,49 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
 .luna-window-control {
   width: 12px;
   height: 12px;
+  flex: 0 0 12px;
+  padding: 0;
   border: 1px solid rgba(0, 0, 0, 0.12);
   border-radius: 50%;
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.55);
+  appearance: none;
+  cursor: pointer;
 }
 
 .luna-window-control.close { background: #ff5f57; }
 .luna-window-control.minimize { background: #febc2e; }
 .luna-window-control.maximize { background: #28c840; }
+
+.luna-window-dock {
+  position: absolute;
+  z-index: 5;
+  right: 50%;
+  bottom: 18px;
+  display: flex;
+  gap: 8px;
+  max-width: calc(100vw - 32px);
+  padding: 8px;
+  overflow-x: auto;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 14px;
+  background: rgba(13, 29, 42, 0.88);
+  transform: translateX(50%);
+  backdrop-filter: blur(14px);
+}
+
+.luna-window-dock button {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(173, 214, 248, 0.36);
+  border-radius: 9px;
+  background: rgba(91, 157, 211, 0.22);
+  color: #f1f8ff;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.luna-window-dock button:hover { background: rgba(91, 157, 211, 0.42); }
 
 .luna-titlebar-label {
   color: #68746f;
@@ -2386,7 +2523,7 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   .institutional-report-actions,
   .global-analysis-history,
   .luna-chat-shell > :not(.luna-desktop-windows),
-  .luna-desktop-windows > :not(.luna-analysis-window),
+  .luna-desktop-windows > :not(.luna-desktop-window-analysis),
   .luna-analysis-window > :not(.luna-report-view),
   .luna-report-view > :not(.global-analysis-panel) {
     display: none !important;
@@ -2419,6 +2556,13 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
     color: #132127 !important;
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
+  }
+
+  .luna-desktop-window-analysis {
+    position: static !important;
+    width: auto !important;
+    height: auto !important;
+    transform: none !important;
   }
 
   .luna-terminal-window { display: none !important; }
@@ -2875,23 +3019,6 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   overflow-wrap: anywhere;
 }
 
-@media (max-width: 900px) {
-  .luna-desktop-windows {
-    width: min(760px, calc(100% - 120px));
-    gap: 14px;
-    margin-left: 106px;
-  }
-  .luna-analysis-window {
-    width: 60%;
-    flex-basis: 60%;
-  }
-  .luna-terminal-window {
-    display: flex;
-    width: 40%;
-    flex-basis: 40%;
-  }
-}
-
 @media (max-width: 620px) {
   .luna-chart-view {
     overflow-y: auto;
@@ -2922,6 +3049,13 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
     padding: 10px 10px 12px;
   }
 
+  .norvexai-pro-banner {
+    top: 104px;
+    gap: 6px;
+    padding: 7px 10px;
+    font-size: 9px;
+  }
+
   .norvexai-navbar {
     top: 14px;
     left: 18px;
@@ -2947,54 +3081,25 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   .norvexai-navbar .luna-watchlist-count { font-size: 7px; }
 
   .luna-desktop-icons {
-    top: auto;
-    right: 18px;
-    bottom: 16px;
-    left: 18px;
-    display: flex;
-    justify-content: center;
-    gap: 8px;
+    inset: auto 10px 12px;
+    z-index: 5;
     width: auto;
-    transform: none;
+    height: 210px;
+    overflow: visible;
   }
 
   .luna-desktop-icon {
-    width: auto;
-    min-width: 0;
-    flex: 1 1 0;
-    padding: 4px 2px;
-    font-size: 9px;
+    width: 96px;
+    height: 68px;
+    gap: 3px;
+    padding: 3px 2px;
+    font-size: 8px;
   }
 
   .luna-desktop-icon-art {
-    width: 42px;
-    height: 36px;
-    border-radius: 11px;
-  }
-
-  .luna-desktop-windows {
-    width: 100%;
-    height: auto;
-    flex: none;
-    flex-direction: column;
-    gap: 12px;
-    margin: 0;
-    align-items: stretch;
-  }
-
-  .luna-analysis-window {
-    width: 100%;
-    height: 420px;
-    min-height: 360px;
-    border-radius: 17px;
-  }
-
-  .luna-terminal-window {
-    width: 100%;
-    height: 280px;
-    min-height: 240px;
-    flex: none;
-    align-self: stretch;
+    width: 38px;
+    height: 32px;
+    border-radius: 10px;
   }
 
   .luna-window-header,
@@ -3011,6 +3116,12 @@ a, button, [role="button"], .cursor-pointer, .cursor-pointer * {
   }
 
   .luna-titlebar { min-height: 36px; }
+
+  .luna-pricing-view { padding: 18px 12px; }
+  .luna-pricing-table { min-width: 520px; font-size: 10px; }
+  .luna-pricing-table th,
+  .luna-pricing-table td { padding: 10px; }
+  .luna-pricing-footer { align-items: stretch; flex-direction: column; text-align: center; }
 
   .luna-sec-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
