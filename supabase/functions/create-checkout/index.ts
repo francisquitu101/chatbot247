@@ -216,6 +216,31 @@ Deno.serve(async (request) => {
           }, request);
         }
 
+        const { data: competingSubscription, error: competingLookupError } =
+          await client
+            .from("pro_subscriptions")
+            .select("paypal_subscription_id, paypal_plan_id, status")
+            .eq("user_id", user.id)
+            .in("status", ["approval_pending", "active", "suspended"])
+            .limit(1)
+            .maybeSingle();
+        if (competingLookupError) {
+          console.error(JSON.stringify({
+            event: "paypal_competing_subscription_lookup_failed",
+            code: competingLookupError.code ?? "SUBSCRIPTION_LOOKUP_FAILED",
+          }));
+        }
+
+        const uniqueConstraint = insertError.code === "23505"
+          ? [
+            "pro_subscriptions_one_open_per_user_idx",
+            "pro_subscriptions_paypal_subscription_id_key",
+          ].find((constraint) =>
+            `${insertError.message ?? ""} ${insertError.details ?? ""}`
+              .includes(constraint)
+          ) ?? "unknown_unique_constraint"
+          : undefined;
+
         const cancelController = new AbortController();
         const cancelTimeout = setTimeout(
           () => cancelController.abort(),
@@ -259,7 +284,28 @@ Deno.serve(async (request) => {
         console.error(JSON.stringify({
           event: "paypal_subscription_record_failed",
           code: insertError.code ?? "SUBSCRIPTION_INSERT_FAILED",
+          ...(uniqueConstraint ? { constraint: uniqueConstraint } : {}),
         }));
+        if (
+          insertError.code === "23505" &&
+          competingSubscription &&
+          competingSubscription.paypal_plan_id === planId
+        ) {
+          if (competingSubscription.status === "approval_pending") {
+            return errorResponse(
+              "SUBSCRIPTION_EXISTS",
+              "Another checkout started a Pro subscription at the same time. Retry checkout to resume that approval.",
+              409,
+              request,
+            );
+          }
+          return errorResponse(
+            "SUBSCRIPTION_EXISTS",
+            "A Pro subscription already exists for this account.",
+            409,
+            request,
+          );
+        }
         return errorResponse(
           "CHECKOUT_ERROR",
           "Unable to record the subscription. Please contact support before retrying.",

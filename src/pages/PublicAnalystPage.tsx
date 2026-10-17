@@ -573,12 +573,18 @@ export function AnalystExperienceDisplay({
     try {
       const { data: response, error: invokeError } = await supabase.functions.invoke<{
         success: boolean
-        data?: { plan_id?: unknown; id?: unknown }
+        data?: { client_id?: unknown; plan_id?: unknown; id?: unknown }
       }>('create-checkout', { body: {} })
       if (invokeError) throw invokeError
-      const clientId = import.meta.env.VITE_PAYPAL_CLIENT_ID
+      const clientId = response?.data?.client_id
       const planId = response?.data?.plan_id
-      if (!response?.success || !clientId || typeof planId !== 'string' || !planId) {
+      if (
+        !response?.success ||
+        typeof clientId !== 'string' ||
+        !clientId ||
+        typeof planId !== 'string' ||
+        !planId
+      ) {
         throw new Error('The payment provider returned an invalid checkout configuration.')
       }
       const subscriptionId = response.data?.id
@@ -625,7 +631,7 @@ export function AnalystExperienceDisplay({
         error?: { message?: string }
       }>('create-checkout', { body: { subscription_id: subscriptionId } })
       if (invokeError) throw invokeError
-      if (!response?.success || typeof response.data?.id !== 'string' || response.data.id !== subscriptionId) {
+      if (!response?.success || typeof response.data?.id !== 'string' || !/^[A-Z0-9-]{1,64}$/i.test(response.data.id)) {
         throw new Error(response?.error?.message ?? 'Unable to record the PayPal subscription.')
       }
       return response.data.id
@@ -633,6 +639,7 @@ export function AnalystExperienceDisplay({
       const message = await getCheckoutErrorMessage(error, 'Unable to prepare the PayPal subscription. Please try again.')
       setCheckoutError(message)
       setCheckoutBusy(false)
+      setCheckoutConfig(null)
       throw new Error(message)
     }
   }
