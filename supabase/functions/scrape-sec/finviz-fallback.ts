@@ -37,7 +37,7 @@ export async function fetchFinvizLatestFilings(
 ): Promise<ScrapedItemDraft[]> {
   try {
     const response = await fetch(`https://finviz.com/stock?t=${encodeURIComponent(ticker)}&p=d&ty=lf`, {
-      headers: { 'User-Agent': 'MarketMole SEC filings fallback', Accept: 'text/html' },
+      headers: { 'User-Agent': 'Norvexai SEC filings fallback', Accept: 'text/html' },
       signal: AbortSignal.timeout(8_000),
     })
     if (!response.ok) throw new Error(`FINVIZ_FILINGS_HTTP_${response.status}`)

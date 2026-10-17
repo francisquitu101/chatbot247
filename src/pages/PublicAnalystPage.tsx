@@ -586,7 +586,7 @@ export function AnalystExperienceDisplay({
       plan_id: checkoutConfig.planId,
       custom_id: session.user.id,
       application_context: {
-        brand_name: 'MarketMole',
+        brand_name: 'Norvexai',
         locale: 'en-US',
         shipping_preference: 'NO_SHIPPING',
         user_action: 'SUBSCRIBE_NOW',
@@ -1394,14 +1394,14 @@ export function AnalystExperienceDisplay({
   )
 
   const terminalWindow = (
-    <aside className="luna-window luna-terminal-window" aria-label="MarketMole Terminal" aria-busy={loading}>
+    <aside className="luna-window luna-terminal-window" aria-label="Norvexai Terminal" aria-busy={loading}>
       <div className="luna-titlebar luna-terminal-titlebar">
         <div className="luna-window-controls" aria-hidden="true">
           <span className="luna-window-control close" />
           <span className="luna-window-control minimize" />
           <span className="luna-window-control maximize" />
         </div>
-        <span className="luna-titlebar-label">MarketMole Terminal</span>
+        <span className="luna-titlebar-label">Norvexai Terminal</span>
         <span className="luna-titlebar-spacer" aria-hidden="true" />
       </div>
       <div className="luna-terminal-content">
@@ -1525,7 +1525,7 @@ export function AnalystExperienceDisplay({
 
       <div className={`luna-desktop-windows ${activeApp === 'chart' ? 'luna-chart-focused' : ''}`}>
       <div className="luna-window luna-analysis-window">
-        <div className="luna-titlebar" aria-label="MarketMole application window">
+        <div className="luna-titlebar" aria-label="Norvexai application window">
           <div className="luna-window-controls" aria-hidden="true">
             <span className="luna-window-control close" />
             <span className="luna-window-control minimize" />
@@ -1535,14 +1535,10 @@ export function AnalystExperienceDisplay({
           <span className="luna-titlebar-spacer" aria-hidden="true" />
         </div>
         <header className="luna-window-header">
-          <div className="luna-mini-ident" aria-label={`MarketMole analyst for ${activeTicker}`}>
-            <img className="marketmole-header-icon" src="/branding/marketmole-icon.png" alt="" />
-            <span className="luna-mini-name">MarketMole</span>
+          <div className="luna-mini-ident" aria-label={`Norvexai analyst for ${activeTicker}`}>
+            <span className="luna-mini-name">Norvexai</span>
             <span className="luna-mini-divider">·</span>
             <span className="luna-mini-ticker">{activeTicker}</span>
-            {activeTicker === 'NVDA' && (
-              <img className="luna-ticker-logo" src="/branding/nvidia-logo.svg" alt="NVIDIA" />
-            )}
           </div>
 
           <div className="luna-header-actions">

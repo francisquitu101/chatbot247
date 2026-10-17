@@ -692,7 +692,7 @@ async function scrapeRssFeed(
     const response = await fetch(feed.url, {
       headers: {
         Accept: 'application/rss+xml,application/xml,text/xml;q=0.9,*/*;q=0.8',
-        'User-Agent': 'MarketMoleNewsIngestion/1.0',
+        'User-Agent': 'NorvexaiNewsIngestion/1.0',
       },
       signal: controller.signal,
     })

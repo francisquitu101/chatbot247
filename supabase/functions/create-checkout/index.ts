@@ -256,7 +256,7 @@ Deno.serve(async (request) => {
                 "PayPal-Request-Id": crypto.randomUUID(),
               },
               body: JSON.stringify({
-                reason: "MarketMole could not record the subscription.",
+                reason: "Norvexai could not record the subscription.",
               }),
               signal: cancelController.signal,
             },

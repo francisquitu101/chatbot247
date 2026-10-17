@@ -204,7 +204,7 @@ export function TechnicalCopilotPanel({ ticker, candles, authenticated }: Techni
       <img
         className="mascot-overlay"
         src="https://i.postimg.cc/VNjWnrk9/Topo-de-marketing-con-laptop.png"
-        alt="MarketMole mascot with a laptop"
+        alt="Norvexai market analysis assistant"
       />
     </aside>
   )

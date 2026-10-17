@@ -12,7 +12,7 @@ const OPENAI_TIMEOUT_MS = 30_000
 const SUMMARY_PROMPT = 'You are an elite equity research analyst. Generate a concise 2-3 sentence executive brief using ONLY the provided source text. Preserve specific financial metrics and concrete numbers stated in the source. NEVER guess, infer, or hallucinate metrics or add external context. If the text is just a headline, summarize exactly what the headline says without adding external context. NEVER use phrases like "The headline suggests...". Write with an authoritative financial tone.'
 const IRRELEVANT_SUMMARY = 'REJECTED: Irrelevant'
 const BLOCKED_PAGE_PATTERN = /\b(?:captcha|enable javascript|cloudflare|are you a robot|verify (?:that )?you are human|access denied|checking your browser|automated requests)\b/i
-const SCRAPER_USER_AGENT = 'MarketMoleNewsBrief/1.0'
+const SCRAPER_USER_AGENT = 'NorvexaiNewsBrief/1.0'
 
 type ArticleFetchResult =
   | { text: string; source: 'jina' | 'microlink' | 'article'; fallbackReason: string | null }

@@ -133,7 +133,7 @@ export function GlobalAnalysisReport({ report, history, onSelectHistory }: Globa
         </button>
       </div>
       <header className="institutional-report-cover">
-        <p className="institutional-report-brand">MarketMole · Institutional Research</p>
+        <p className="institutional-report-brand">Norvexai · Institutional Research</p>
         <span className={`report-sentiment sentiment-${analysis.sentiment.toLowerCase()}`}>
           {analysis.sentiment} assessment
         </span>

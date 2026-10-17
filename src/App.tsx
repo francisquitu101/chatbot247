@@ -102,14 +102,14 @@ function CheckoutReturnPage({ status, session }: { status: CheckoutStatus; sessi
       ? {
           eyebrow: 'SUBSCRIPTION ACTIVE',
           title: 'Welcome to Pro.',
-          message: 'Welcome to MarketMole Pro!',
+          message: 'Welcome to Norvexai Pro!',
           detail: 'Your monthly PayPal subscription is active. Your Watchlist now supports up to 10 tickers.',
         }
       : subscriptionState === 'legacy_completed'
         ? {
             eyebrow: 'PAYMENT CONFIRMED',
             title: 'Welcome to Pro.',
-            message: 'Welcome to MarketMole Pro!',
+            message: 'Welcome to Norvexai Pro!',
             detail: 'Your PayPal payment was captured and Pro access is active.',
           }
       : subscriptionState === 'pending'
@@ -130,20 +130,20 @@ function CheckoutReturnPage({ status, session }: { status: CheckoutStatus; sessi
             eyebrow: 'VERIFYING SUBSCRIPTION',
             title: 'Confirming your PayPal subscription…',
             message: 'Please keep this page open.',
-            detail: 'PayPal approval is complete; MarketMole is verifying the recurring plan.',
+            detail: 'PayPal approval is complete; Norvexai is verifying the recurring plan.',
           }
     : status === 'pending'
       ? {
           eyebrow: 'SUBSCRIPTION PROCESSING',
           title: 'Your subscription is pending.',
           message: 'PayPal has not activated the subscription yet.',
-          detail: 'You can return to MarketMole and check again later.',
+          detail: 'You can return to Norvexai and check again later.',
         }
       : {
           eyebrow: 'SUBSCRIPTION NOT COMPLETED',
           title: 'We could not confirm your subscription.',
           message: 'No Pro access was activated.',
-          detail: 'You can return to MarketMole and try checkout again.',
+          detail: 'You can return to Norvexai and try checkout again.',
         }
   const displayStatus = status === 'success' && subscriptionState === 'failed'
     ? 'failure'
@@ -218,7 +218,7 @@ function App() {
   }, [])
 
   if (authLoading) {
-    return <TerminalLoader message="Preparing MarketMole..." />
+    return <TerminalLoader message="Preparing Norvexai..." />
   }
 
   if (route.checkoutStatus) {

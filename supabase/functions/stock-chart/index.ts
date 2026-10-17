@@ -42,7 +42,7 @@ Deno.serve(async (request) => {
     const response = await fetch(
       `${YAHOO_CHART_URL}/${encodeURIComponent(ticker)}?range=6mo&interval=1d`,
       {
-        headers: { "User-Agent": "MarketMole/1.0 (market data chart)" },
+        headers: { "User-Agent": "Norvexai/1.0 (market data chart)" },
         signal: controller.signal,
       },
     );
